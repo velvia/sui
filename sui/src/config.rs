@@ -13,16 +13,13 @@ use move_core_types::{identifier::Identifier, transaction_argument::TransactionA
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::fmt::{Debug, Display, Formatter};
+use std::net::TcpListener;
 use std::time::Duration;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, read_to_string, File, OpenOptions},
     io::{BufReader, BufWriter, Write},
     iter::FromIterator,
-};
-use std::{
-    fmt::{Debug, Display, Formatter},
-    net::TcpListener,
 };
 use sui_network::transport;
 use sui_types::object::Object;

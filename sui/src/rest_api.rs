@@ -9,18 +9,18 @@ use dropshot::{
     HttpResponseUpdatedNoContent, HttpServerStarter, RequestContext, TypedBody,
 };
 
-use fastpay::config::{
+use sui::config::{
     AccountInfo, AuthorityInfo, AuthorityPrivateInfo, NetworkConfig, PortAllocator, WalletConfig,
 };
-use fastpay::utils::Config;
-use fastpay::wallet_commands::WalletContext;
-use fastpay_core::authority::{AuthorityState, AuthorityStore};
-use fastpay_core::authority_server::AuthorityServer;
-use fastpay_core::client::Client;
-use fastx_types::committee::Committee;
-use fastx_types::messages::{ExecutionStatus, OrderEffects};
-use fastx_types::object::Object as FastxObject;
-use fastx_types::{base_types::*, object::ObjectRead};
+use sui::utils::Config;
+use sui::wallet_commands::WalletContext;
+use sui_core::authority::{AuthorityState, AuthorityStore};
+use sui_core::authority_server::AuthorityServer;
+use sui_core::client::Client;
+use sui_types::committee::Committee;
+use sui_types::messages::{ExecutionStatus, OrderEffects};
+use sui_types::object::Object as FastxObject;
+use sui_types::{base_types::*, object::ObjectRead};
 
 use futures::future::join_all;
 use move_core_types::account_address::AccountAddress;
@@ -964,7 +964,7 @@ async fn transfer_object(
         Ok(result) => match result {
             Ok(result) => match result {
                 Ok((cert, effects)) => {
-                    if effects.status != ExecutionStatus::Success {
+                    if matches!(effects.status, ExecutionStatus::Failure { .. }) {
                         return Err(HttpError::for_client_error(
                             None,
                             hyper::StatusCode::FAILED_DEPENDENCY,
@@ -1090,14 +1090,14 @@ async fn publish(
             .spawn(|_| {
                 // publish
                 let rt = Runtime::new().unwrap();
-                rt.block_on(async move { client_state.publish(path, gas_obj_ref).await })
+                rt.block_on(async move { client_state.publish(path, gas_obj_ref, 100000000).await })
             })
             .join()
     }) {
         Ok(result) => match result {
             Ok(result) => match result {
                 Ok((cert, effects)) => {
-                    if effects.status != ExecutionStatus::Success {
+                    if matches!(effects.status, ExecutionStatus::Failure { .. }) {
                         return Err(HttpError::for_client_error(
                             None,
                             hyper::StatusCode::FAILED_DEPENDENCY,
