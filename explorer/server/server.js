@@ -1,20 +1,23 @@
 const express = require('express')
+const cors = require('cors')
 const { exec } = require('child_process')
 
 const app = express()
 const port = 4000
 
+app.use(cors())
+
 app.get('/', (req, res) => {
   exec('./target/release/wallet --no-shell addresses', (error, stdout, stderr) => {
           if (error) {
-            res.end(`{message: ${error.message}`)
+            res.json({message: error.message})
             return;
           }
           if (stderr) {
-            res.end(`{message: ${stderr}`)
+            res.json({message: stderr})
             return;
           }
-          res.end(`{data: ${stdout}`)
+          res.json({data: stdout})
   })
 });
 
