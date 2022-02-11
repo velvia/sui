@@ -20,6 +20,10 @@ use std::{
     io::{BufReader, BufWriter, Write},
     iter::FromIterator,
 };
+use std::{
+    fmt::{Debug, Display, Formatter},
+    net::TcpListener,
+};
 use sui_network::transport;
 use sui_types::object::Object;
 
@@ -432,5 +436,26 @@ impl Config for NetworkConfig {
 
     fn config_path(&self) -> &str {
         &*self.config_path
+    }
+}
+
+pub struct PortAllocator {
+    next_port: u16,
+}
+
+impl PortAllocator {
+    pub fn new(starting_port: u16) -> Self {
+        Self {
+            next_port: starting_port,
+        }
+    }
+    pub fn next_port(&mut self) -> Option<u16> {
+        for port in self.next_port..65535 {
+            if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+                self.next_port = port + 1;
+                return Some(port);
+            }
+        }
+        None
     }
 }
