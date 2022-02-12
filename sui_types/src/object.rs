@@ -401,6 +401,25 @@ impl Object {
         }
     }
 
+    pub fn with_id_owner_gas_coin_object_for_testing_max(
+        id: ObjectID,
+        version: SequenceNumber,
+        owner: SuiAddress,
+    ) -> Self {
+        let obj = GasCoin::new(id, version, u64::MAX-1);
+
+        let data = Data::Move(MoveObject {
+            type_: GasCoin::type_(),
+            contents: bcs::to_bytes(&obj).unwrap(),
+            read_only: false,
+        });
+        Self {
+            owner: Authenticator::Address(owner),
+            data,
+            previous_transaction: TransactionDigest::genesis(),
+        }
+    }
+
     /// Get a `MoveStructLayout` for `self`.
     /// The `resolver` value must contain the module that declares `self.type_` and the (transitive)
     /// dependencies of `self.type_` in order for this to succeed. Failure will result in an `ObjectSerializationError`

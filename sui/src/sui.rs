@@ -138,15 +138,35 @@ async fn genesis(mut config: NetworkConfig) -> Result<(), anyhow::Error> {
     let mut preload_objects = Vec::new();
 
     println!("Creating test objects...");
-    for _ in 0..5 {
-        let (address, key_pair) = get_key_pair();
+
+    let kp_addr = sui_types::base_types::decode_address_hex(
+        "e29a7386cacb8b385498664c2743dcbde65dff60e0ea48725115d2847060e85a",
+    )
+    .unwrap();
+    let kp_hack = sui_types::base_types::key_pair_from_string(
+        "XzcEHpEIX5Etomj0mbEXAsdjRSXmEHvB3fta9nHZbS/imnOGysuLOFSYZkwnQ9y95l3/YODqSHJRFdKEcGDoWg==",
+    );
+
+    for addr_id in 0..1 {
+        let (address, key_pair) = if addr_id == 0 {
+            (kp_addr, kp_hack.copy())
+        } else {
+            get_key_pair()
+        };
         new_addresses.push(AccountInfo { address, key_pair });
-        for _ in 0..5 {
-            let new_object = Object::with_id_owner_gas_coin_object_for_testing(
-                ObjectID::random(),
+        for n in 3..8 {
+            // Hardcode the objects ids for the first account
+            let objid = if addr_id == 0 {
+                sui_types::base_types::get_object_id_from_u8(n)
+            } else {
+                ObjectID::random()
+            };
+            println!("Creating {} {}", addr_id, objid);
+
+            let new_object = Object::with_id_owner_gas_coin_object_for_testing_max(
+                objid,
                 SequenceNumber::new(),
                 address,
-                1000,
             );
             preload_objects.push(new_object);
         }

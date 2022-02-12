@@ -373,6 +373,16 @@ impl<'de> Deserialize<'de> for KeyPair {
     }
 }
 
+pub fn key_pair_from_string(s: &str) -> KeyPair {
+    let value = base64::decode(s).unwrap();
+    let key = dalek::Keypair::from_bytes(&value).unwrap();
+    KeyPair(key)
+}
+
+pub fn address_from_hex_str(s: String) -> PublicKeyBytes {
+    decode_address_hex(&s).unwrap()
+}
+
 impl std::fmt::Debug for Signature {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
         let s = base64::encode(&self.0);
@@ -395,6 +405,12 @@ impl std::fmt::Debug for ObjectDigest {
         write!(f, "o#{}", s)?;
         Ok(())
     }
+}
+
+pub fn get_object_id_from_u8(n: u8) -> ObjectID {
+    let mut addr = [0u8; AccountAddress::LENGTH];
+    addr[AccountAddress::LENGTH - 1] = n;
+    AccountAddress::new(addr)
 }
 
 impl std::fmt::Debug for TransactionDigest {
