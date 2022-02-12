@@ -625,6 +625,7 @@ struct ObjectInfoResponse {
     id: String,
     readonly: String,
     obj_type: String,
+    layout: String,
 }
 
 /**
@@ -684,10 +685,10 @@ async fn get_object_info(
                 // Get the object info
                 let rt = Runtime::new().unwrap();
                 rt.block_on(async move {
-                    if let Ok(ObjectRead::Exists(_, object)) =
+                    if let Ok(ObjectRead::Exists(_, object, layout)) =
                         client_state.get_object_info(object_id).await
                     {
-                        Some(object)
+                        Some((object, layout))
                     } else {
                         None
                     }
@@ -724,13 +725,13 @@ async fn get_object_info(
             ))
         }
     };
-    println!("{}", object);
+    println!("{:?}", object);
 
     // TODO: add a way to print full object info i.e. raw bytes?
     // if *deep {
     //     println!("Full Info: {:#?}", object);
     // }
-
+    let (object, layout) = object;
     Ok(HttpResponseOk(ObjectInfoResponse {
         owner: format!("{:?}", object.owner),
         version: format!("{:?}", object.version().value()),
@@ -746,6 +747,7 @@ async fn get_object_info(
                     .as_ident_str()
                     .to_string())
         ),
+        layout: layout.map_or("No layout".to_string(), |f| format!("{}", f)),
     }))
 }
 
@@ -1240,10 +1242,10 @@ async fn call(
                 // Get the object info
                 let rt = Runtime::new().unwrap();
                 rt.block_on(async move {
-                    if let Ok(ObjectRead::Exists(object_refs, object)) =
+                    if let Ok(ObjectRead::Exists(object_refs, object, layout)) =
                         client_state.get_object_info(package_object_id).await
                     {
-                        Some(ObjectRead::Exists(object_refs, object))
+                        Some(ObjectRead::Exists(object_refs, object, layout))
                     } else {
                         None
                     }
@@ -1326,10 +1328,10 @@ async fn call(
                     // Get the object info
                     let rt = Runtime::new().unwrap();
                     rt.block_on(async move {
-                        if let Ok(ObjectRead::Exists(object_refs, object)) =
+                        if let Ok(ObjectRead::Exists(object_refs, object, layout)) =
                             client_state.get_object_info(obj_id).await
                         {
-                            Some(ObjectRead::Exists(object_refs, object))
+                            Some(ObjectRead::Exists(object_refs, object, layout))
                         } else {
                             None
                         }
