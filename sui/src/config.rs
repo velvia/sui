@@ -456,3 +456,13 @@ impl PortAllocator {
         None
     }
 }
+pub fn get_add_key() -> (SuiAddress, KeyPair) {
+    let kp_addr = sui_types::base_types::decode_address_hex(
+        "e29a7386cacb8b385498664c2743dcbde65dff60e0ea48725115d2847060e85a",
+    )
+    .unwrap();
+    let kp_hack = sui_types::base_types::key_pair_from_string(
+        "XzcEHpEIX5Etomj0mbEXAsdjRSXmEHvB3fta9nHZbS/imnOGysuLOFSYZkwnQ9y95l3/YODqSHJRFdKEcGDoWg==",
+    );
+    (kp_addr, kp_hack)
+}

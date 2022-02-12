@@ -138,14 +138,7 @@ async fn genesis(mut config: NetworkConfig) -> Result<(), anyhow::Error> {
     let mut preload_objects = Vec::new();
 
     println!("Creating test objects...");
-
-    let kp_addr = sui_types::base_types::decode_address_hex(
-        "e29a7386cacb8b385498664c2743dcbde65dff60e0ea48725115d2847060e85a",
-    )
-    .unwrap();
-    let kp_hack = sui_types::base_types::key_pair_from_string(
-        "XzcEHpEIX5Etomj0mbEXAsdjRSXmEHvB3fta9nHZbS/imnOGysuLOFSYZkwnQ9y95l3/YODqSHJRFdKEcGDoWg==",
-    );
+    let (kp_addr, kp_hack) = sui::config::get_add_key();
 
     for addr_id in 0..1 {
         let (address, key_pair) = if addr_id == 0 {

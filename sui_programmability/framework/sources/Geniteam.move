@@ -61,11 +61,11 @@ module FastX::Geniteam {
     // === Constructors. These create new Sui objects. ===
 
     public fun create_player_(
-        player_name: String, farm: Farm, ctx: &mut TxContext
+        player_name: vector<u8>, farm: Farm, ctx: &mut TxContext
     ): Player {
         Player {
             id: TxContext::new_id(ctx),
-            player_name,
+            player_name: ASCII::string(player_name),
             farm,
             water_runes_count: 0,
             fire_runes_count: 0,
@@ -75,11 +75,11 @@ module FastX::Geniteam {
     }
 
     public fun create_farm_(
-        farm_name: String, farm_img_id: u64, total_monster_slots: u64, ctx: &mut TxContext
+        farm_name: vector<u8>, farm_img_id: u64, total_monster_slots: u64, ctx: &mut TxContext
     ): Farm {
         Farm {
             id: TxContext::new_id(ctx),
-            farm_name,
+            farm_name: ASCII::string(farm_name),
             farm_img_id,
             level: 0,
             total_monster_slots,
@@ -91,20 +91,21 @@ module FastX::Geniteam {
     }
 
     public fun create_monster_(
-        monster_name: String, 
+        monster_name: vector<u8>, 
         monster_img_id: u64, 
         breed: u8, 
         monster_affinity: u8, 
-        monster_description: String, 
+        monster_description: vector<u8>, 
         ctx: &mut TxContext
     ): Monster {
+
         Monster {
             id: TxContext::new_id(ctx),
-            monster_name,
+            monster_name: ASCII::string(monster_name),
             monster_img_id,
             breed,
             monster_affinity,
-            monster_description,
+            monster_description: ASCII::string(monster_description),
             monster_level: 0,
             hunger_level: 0,
             affection_level: 0,
@@ -140,8 +141,8 @@ module FastX::Geniteam {
     public fun create_player(
         player_name: vector<u8>, farm_name: vector<u8>, farm_img_id: u64, total_monster_slots: u64, ctx: &mut TxContext
     ) {
-        let farm = create_farm_(ASCII::string(farm_name), farm_img_id, total_monster_slots, ctx);
-        let player = create_player_(ASCII::string(player_name), farm, ctx);
+        let farm = create_farm_(farm_name, farm_img_id, total_monster_slots, ctx);
+        let player = create_player_(player_name, farm, ctx);
         Transfer::transfer(player, TxContext::get_signer_address(ctx))
     }
 
@@ -170,11 +171,11 @@ module FastX::Geniteam {
         ctx: &mut TxContext
     ) {
         let monster = create_monster_(
-            ASCII::string(monster_name),
+            monster_name,
             monster_img_id,
             breed,
             monster_affinity,
-            ASCII::string(monster_description),
+            monster_description,
             ctx
         );
         Transfer::transfer(monster, TxContext::get_signer_address(ctx))

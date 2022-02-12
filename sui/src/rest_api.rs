@@ -193,19 +193,28 @@ async fn genesis(
     let mut preload_objects: Vec<FastxObject> = Vec::new();
 
     println!("Creating test objects...");
-    for _ in 0..num_objects {
-        let (address, key_pair) = get_key_pair();
-        new_addresses.push(AccountInfo { address, key_pair });
-        for _ in 0..num_objects {
-            let new_object = FastxObject::with_id_owner_gas_coin_object_for_testing(
-                ObjectID::random(),
-                SequenceNumber::new(),
-                address,
-                1000000,
-            );
-            preload_objects.push(new_object);
-        }
+    let address = sui_types::base_types::decode_address_hex(
+        "e29a7386cacb8b385498664c2743dcbde65dff60e0ea48725115d2847060e85a",
+    )
+    .unwrap();
+    let key_pair = sui_types::base_types::key_pair_from_string(
+        "XzcEHpEIX5Etomj0mbEXAsdjRSXmEHvB3fta9nHZbS/imnOGysuLOFSYZkwnQ9y95l3/YODqSHJRFdKEcGDoWg==",
+    );
+
+    new_addresses.push(AccountInfo { address, key_pair });
+    for n in 3..8 {
+        // Hardcode the objects ids for the first account
+        let objid = sui_types::base_types::get_object_id_from_u8(n);
+        println!("Creating {:?} {}", address, objid);
+
+        let new_object = sui_types::object::Object::with_id_owner_gas_coin_object_for_testing_max(
+            sui_types::base_types::get_object_id_from_u8(n),
+            SequenceNumber::new(),
+            address,
+        );
+        preload_objects.push(new_object);
     }
+
     let committee = Committee::new(authorities);
 
     // Make server state to persist the objects.
@@ -356,7 +365,7 @@ async fn start(
         .iter()
         .map(|info| info.address)
         .collect::<Vec<_>>();
-    let mut wallet_context = WalletContext::new(config);
+    let mut wallet_context = WalletContext::new(config).unwrap();
 
     // Sync all accounts.
     for address in addresses.iter() {
@@ -653,17 +662,7 @@ async fn get_object_info(
     };
 
     // Pick the first (or any) account for use in finding obj info
-    let account = match wallet_context.find_owner(&object_id) {
-        Ok(account) => account,
-        Err(error) => {
-            return Err(HttpError::for_client_error(
-                None,
-                hyper::StatusCode::FAILED_DEPENDENCY,
-                format!("{error}"),
-            ))
-        }
-    };
-
+    let account = sui::config::get_add_key().0;
     // Fetch the object ref
     let client_state = match wallet_context.get_or_create_client_state(&account) {
         Ok(client_state) => client_state,
@@ -923,16 +922,7 @@ async fn transfer_object(
         }
     };
 
-    let owner = match wallet_context.find_owner(&gas_object_id) {
-        Ok(owner) => owner,
-        Err(err) => {
-            return Err(HttpError::for_client_error(
-                None,
-                hyper::StatusCode::FAILED_DEPENDENCY,
-                format!("{err}"),
-            ))
-        }
-    };
+    let owner = sui::config::get_add_key().0;
 
     let client_state = match wallet_context.get_or_create_client_state(&owner) {
         Ok(client_state) => client_state,
@@ -1055,16 +1045,7 @@ async fn publish(
     }
     let wallet_context = wallet_context.as_mut().unwrap();
 
-    let owner = match wallet_context.find_owner(&gas_object_id) {
-        Ok(account) => account,
-        Err(error) => {
-            return Err(HttpError::for_client_error(
-                None,
-                hyper::StatusCode::FAILED_DEPENDENCY,
-                format!("{error}"),
-            ))
-        }
-    };
+    let owner = sui::config::get_add_key().0;
 
     let client_state = match wallet_context.get_or_create_client_state(&owner) {
         Ok(client_state) => client_state,
@@ -1237,16 +1218,7 @@ async fn call(
     let wallet_context = wallet_context.as_mut().unwrap();
 
     // Find owner of gas object
-    let sender = match wallet_context.find_owner(&gas_object_id) {
-        Ok(account) => account,
-        Err(error) => {
-            return Err(HttpError::for_client_error(
-                None,
-                hyper::StatusCode::FAILED_DEPENDENCY,
-                format!("Could not find owner for gas object: {error}"),
-            ))
-        }
-    };
+    let sender = sui::config::get_add_key().0;
 
     let client_state = match wallet_context.get_or_create_client_state(&sender) {
         Ok(client_state) => client_state,

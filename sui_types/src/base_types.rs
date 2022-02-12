@@ -273,6 +273,13 @@ pub fn decode_address_hex(s: &str) -> Result<PublicKeyBytes, hex::FromHexError> 
     Ok(PublicKeyBytes(address))
 }
 
+pub fn decode_address_hex_unwrap(s: &str) -> PublicKeyBytes {
+    let value = hex::decode(s).unwrap();
+    let mut address = [0u8; dalek::PUBLIC_KEY_LENGTH];
+    address.copy_from_slice(&value[..dalek::PUBLIC_KEY_LENGTH]);
+    PublicKeyBytes(address)
+}
+
 impl std::fmt::LowerHex for PublicKeyBytes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if f.alternate() {
