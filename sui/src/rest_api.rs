@@ -32,7 +32,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::net::{Ipv6Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::runtime::Runtime;
@@ -46,7 +46,7 @@ const DEFAULT_WEIGHT: usize = 1;
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let config_dropshot: ConfigDropshot = ConfigDropshot {
-        bind_address: SocketAddr::from((Ipv6Addr::LOCALHOST, 5000)),
+        bind_address: SocketAddr::from((Ipv4Addr::new(0, 0, 0, 0), 5000)),
         ..Default::default()
     };
 
@@ -625,7 +625,7 @@ struct ObjectInfoResponse {
     id: String,
     readonly: String,
     obj_type: String,
-    layout: String,
+    data: serde_json::value::Value,
 }
 
 /**
@@ -731,7 +731,19 @@ async fn get_object_info(
     // if *deep {
     //     println!("Full Info: {:#?}", object);
     // }
+    #[derive(Serialize, Deserialize)]
+    struct NoData {}
+    let n = NoData {};
+    let empty: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&n).unwrap()).unwrap();
     let (object, layout) = object;
+    let data = match layout {
+        None => empty,
+        Some(v) => match object.to_json(&Some(v)) {
+            Ok(r) => r,
+            Err(_) => empty,
+        },
+    };
     Ok(HttpResponseOk(ObjectInfoResponse {
         owner: format!("{:?}", object.owner),
         version: format!("{:?}", object.version().value()),
@@ -747,7 +759,7 @@ async fn get_object_info(
                     .as_ident_str()
                     .to_string())
         ),
-        layout: layout.map_or("No layout".to_string(), |f| format!("{}", f)),
+        data,
     }))
 }
 
