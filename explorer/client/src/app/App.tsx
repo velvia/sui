@@ -35,7 +35,6 @@ function App() {
       objectID = "No Data"
     }
 
-  console.log(mockTransactionData)
     return <div className={appStyles.app}>
       <h1>Mysten Labs</h1> 
       <h2>The Sui Explorer</h2> 
