@@ -18,10 +18,12 @@ function App() {
       <h1>Mysten Labs</h1> 
       <h2>The Sui Explorer</h2> 
       <Search/>
-        {data 
+        {
+          data 
           ? <TransactionResult data={data}/>
           : <LatestTransactions/>
-    }
+        }
+      <a href="/">Home</a>
     </div>;
 }
 
