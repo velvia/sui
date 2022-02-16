@@ -1,5 +1,6 @@
 import React from 'react';
 
+import Footer from '../components/footer/Footer'
 import LatestTransactions from '../components/latesttransactions/LatestTransactions'
 import Search from '../components/search/Search';
 import TransactionResult from '../components/transactionresult/TransactionResult'
@@ -25,7 +26,7 @@ function App() {
           ? <TransactionResult data={data}/>
           : <LatestTransactions/>
         }
-      <a href="/">Home</a>
+      <Footer/>
     </div>;
 }
 
