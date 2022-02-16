@@ -15,7 +15,7 @@ function App() {
       )
   
     return <div className={appStyles.app}>
-      <h1 className="text-2xl lg:text-4xl">Mysten Labs</h1> 
+      <h1>Mysten Labs</h1> 
       <div className={appStyles.search}>
         <h2>The Sui Explorer</h2> 
         <Search/>

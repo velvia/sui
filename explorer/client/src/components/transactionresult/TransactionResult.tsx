@@ -34,7 +34,7 @@ function TransactionResult({data} : {data : DataType}) {
       objectID = "No Data"
     }
 
-return <div>
+return <div className={styles.data}>
         <div className={styles.label}>
           Transaction ID
         </div> 
