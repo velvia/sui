@@ -1,13 +1,16 @@
+import styles from './Search.module.scss'
+
 function Search() {
   return (
     <form action="/" method="get">
       <input
+        className={styles.searchtext}
         type="text"
         id="search"
         placeholder="Search transactions by ID" 
         name="txn_id"
       />
-      <button type="submit">
+      <button type="submit" className={styles.searchbtn}>
         Search
       </button>
     </form>

@@ -1,8 +1,8 @@
 import React from 'react';
 
-import LatestTransactions from '../components/LatestTransactions'
-import Search from '../components/Search';
-import TransactionResult from '../components/TransactionResult'
+import LatestTransactions from '../components/latesttransactions/LatestTransactions'
+import Search from '../components/search/Search';
+import TransactionResult from '../components/transactionresult/TransactionResult'
 import mockTransactionData from '../utils/transaction_mock.json'
 import appStyles from './App.module.scss';
 
@@ -15,9 +15,11 @@ function App() {
       )
   
     return <div className={appStyles.app}>
-      <h1>Mysten Labs</h1> 
-      <h2>The Sui Explorer</h2> 
-      <Search/>
+      <h1 className="text-2xl lg:text-4xl">Mysten Labs</h1> 
+      <div className={appStyles.search}>
+        <h2>The Sui Explorer</h2> 
+        <Search/>
+      </div>
         {
           data 
           ? <TransactionResult data={data}/>
