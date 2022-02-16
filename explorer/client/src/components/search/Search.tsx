@@ -2,7 +2,7 @@ import styles from './Search.module.scss'
 
 function Search() {
   return (
-    <form action="/" method="get">
+    <form className={styles.form} action="/" method="get">
       <input
         className={styles.searchtext}
         type="text"

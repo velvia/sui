@@ -1,3 +1,5 @@
+import styles from './TransactionResult.module.scss';
+
 type DataType = {
   id: string;
   status: string;
@@ -33,21 +35,40 @@ function TransactionResult({data} : {data : DataType}) {
     }
 
 return <div>
-        <br/>
-        <div>Transaction ID</div> 
-        <div>{data.id}</div>
-        <br/>
-        <div>Status</div> 
-        <div>{data.status}</div> 
-        <br/>
-        <div>Sender</div> 
-        <div>{data.sender}</div>
-        <br/>
-        <div>Did</div> 
-        <div>{action}</div>
-        <br/>
-        <div>Object</div> 
-        <div>{objectID}</div>
+        <div className={styles.label}>
+          Transaction ID
+        </div> 
+        <div className={styles.result}>
+          {data.id}
+        </div>
+        
+        <div className={styles.label}>
+          Status
+        </div> 
+        <div className={styles.result}>
+          {data.status}
+        </div> 
+
+        <div className={styles.label}>
+          Sender
+        </div> 
+        <div className={styles.result}>
+          {data.sender}
+        </div>
+        
+        <div className={styles.label}>
+          Did
+        </div> 
+        <div className={styles.result}>
+          {action}
+        </div>
+        
+        <div className={styles.label}>
+          Object
+        </div> 
+        <div className={styles.result}>
+        {objectID}
+        </div>
       </div> 
 
 }
