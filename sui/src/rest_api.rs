@@ -48,7 +48,7 @@ const DEFAULT_WEIGHT: usize = 1;
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let config_dropshot: ConfigDropshot = ConfigDropshot {
-        bind_address: SocketAddr::from((Ipv4Addr::new(127, 0, 0, 1), 5001)),
+        bind_address: SocketAddr::from((Ipv4Addr::new(0, 0, 0, 0), 5000)),
         ..Default::default()
     };
 
@@ -1155,7 +1155,7 @@ struct CallRequest {
  */
 #[endpoint {
     method = PATCH,
-    path = "/wallet/call",
+    path = "/wallet/call_old",
 }]
 async fn call(
     rqctx: Arc<RequestContext<ServerContext>>,
@@ -1377,9 +1377,9 @@ async fn call(
 struct CallSimpleRequest {
     sender: String,
     package_object_id: String,
-    module_name: String,
-    function_name: String,
-    type_tags: Vec<String>,
+    module: String,
+    function: String,
+    //type_tags: Vec<String>,
     args: Vec<ClientArgsInputElem>,
     // var_alias_map: Option<BTreeMap<String, String>>,
     // type_alias_map: Option<BTreeMap<String, String>>,
@@ -1393,7 +1393,7 @@ struct CallSimpleRequest {
  */
 #[endpoint {
     method = PATCH,
-    path = "/wallet/call_simple",
+    path = "/wallet/call",
 }]
 async fn call_simple(
     rqctx: Arc<RequestContext<ServerContext>>,
@@ -1424,7 +1424,7 @@ async fn call_simple(
         }
     };
 
-    let module_name = match Identifier::from_str(&call_params.module_name) {
+    let module_name = match Identifier::from_str(&call_params.module) {
         Ok(q) => q,
         Err(e) => {
             return Err(HttpError::for_client_error(
@@ -1434,7 +1434,7 @@ async fn call_simple(
             ))
         }
     };
-    let function_name = match Identifier::from_str(&call_params.function_name) {
+    let function_name = match Identifier::from_str(&call_params.function) {
         Ok(q) => q,
         Err(e) => {
             return Err(HttpError::for_client_error(
