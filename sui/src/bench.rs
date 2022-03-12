@@ -158,7 +158,7 @@ impl ClientServerBenchmark {
 
         let mut opts = Options::default();
         opts.increase_parallelism(self.db_cpus as i32);
-        let store = Arc::new(AuthorityStore::open(path, None));
+        let store = Arc::new(AuthorityStore::open(path, Some(opts)));
 
         // Seed user accounts.
         let rt = Runtime::new().unwrap();
