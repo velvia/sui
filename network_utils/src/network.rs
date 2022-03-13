@@ -9,6 +9,7 @@ use std::{
     net::TcpListener,
     sync::atomic::{AtomicUsize, Ordering},
 };
+use std::time::{Duration, Instant};
 use sui_types::{error::*, serialize::*};
 use tracing::*;
 
@@ -84,11 +85,25 @@ impl NetworkClient {
         let mut in_flight: u64 = 0;
         let mut responses = Vec::new();
 
+        let mut time_start = Instant::now();
+        let mut items_number : usize = 0;
         loop {
             while in_flight < max_in_flight {
                 let request = match requests.next() {
                     None => {
                         if in_flight == 0 {
+
+                            // This is the exit
+
+                            let elapsed_time = time_start.elapsed().as_micros();
+
+                            warn!(
+                                "Thread: Total time: {}us, items: {}, tx/sec: {}",
+                                elapsed_time,
+                                items_number,
+                                1_000_000.0 * (items_number as f64) / (elapsed_time as f64)
+                            );
+
                             return Ok(responses);
                         }
                         // No more entries to send.
@@ -96,6 +111,9 @@ impl NetworkClient {
                     }
                     Some(request) => request,
                 };
+
+                items_number += 1;
+
                 let status = time::timeout(self.send_timeout, stream.write_data(request)).await;
                 if let Err(error) = status {
                     error!("Failed to send request: {}", error);
@@ -103,8 +121,20 @@ impl NetworkClient {
                 }
                 in_flight += 1;
             }
-            if requests.len() % 5000 == 0 && requests.len() > 0 {
-                info!("In flight {} Remaining {}", in_flight, requests.len());
+            if requests.len() % 2000 == 0 && requests.len() > 0 {
+
+                let elapsed_time = time_start.elapsed().as_micros();
+
+                warn!(
+                    "Thread: Total time: {}us, items: {}, tx/sec: {}",
+                    elapsed_time,
+                    items_number,
+                    1_000_000.0 * (items_number as f64) / (elapsed_time as f64)
+                );
+
+                // info!("In flight {} Remaining {}", in_flight, requests.len());
+                items_number = 0;
+                time_start = Instant::now();
             }
             match time::timeout(self.recv_timeout, stream.read_data()).await {
                 Ok(Some(Ok(buffer))) => {
@@ -116,7 +146,7 @@ impl NetworkClient {
                 }
                 Ok(None) => {
                     info!("Socket closed by server");
-                    return Ok(responses);
+                    break
                 }
                 Err(error) => {
                     error!(
@@ -126,6 +156,9 @@ impl NetworkClient {
                 }
             }
         }
+
+        return Ok(responses);
+
     }
 
     pub fn batch_send<I>(
