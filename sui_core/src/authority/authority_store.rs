@@ -30,7 +30,7 @@ struct CachedObjectItem {
 }
 
 struct AquiredLocks<'a>(
-    HashMap<usize, parking_lot::MutexGuard<'a, HashMap<ObjectID, CachedObjectItem>>>,
+    HashMap<usize, parking_lot::RwLockWriteGuard<'a, HashMap<ObjectID, CachedObjectItem>>>,
 );
 
 impl<'a> AquiredLocks<'a> {
@@ -140,7 +140,7 @@ pub struct SuiDataStore<const ALL_OBJ_VER: bool> {
     schedule: DBMap<ObjectID, SequenceNumber>,
 
     /// Internal vector of locks to manage concurrent writes to the database
-    lock_table: Vec<parking_lot::Mutex<HashMap<ObjectID, CachedObjectItem>>>,
+    lock_table: Vec<parking_lot::RwLock<HashMap<ObjectID, CachedObjectItem>>>,
 
     // Tables used for authority batch structure
     /// A sequence on all executed certificates and effects.
@@ -273,7 +273,7 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
             schedule,
             lock_table: (0..NUM_SHARDS)
                 .into_iter()
-                .map(|_| parking_lot::Mutex::new(HashMap::new()))
+                .map(|_| parking_lot::RwLock::new(HashMap::new()))
                 .collect(),
             executed_sequence,
             batches,
@@ -297,7 +297,7 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
         AquiredLocks(
             lock_number
                 .into_iter()
-                .map(|lock_seq| (lock_seq, self.lock_table[lock_seq].lock()))
+                .map(|lock_seq| (lock_seq, self.lock_table[lock_seq].write()))
                 .collect(),
         )
     }
@@ -339,7 +339,7 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
         // First read from cache
         for objid in _objects {
             // Update the object cache
-            let cache = self.lock_table[objid.to_shard() % self.lock_table.len()].lock();
+            let cache = self.lock_table[objid.to_shard() % self.lock_table.len()].read();
             if let Some(cahced_object) = cache.get(&objid) {
                 local.insert(*objid, Some(cahced_object.object.clone()));
             } else {
@@ -479,7 +479,7 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
             .insert(&object_ref, &object.previous_transaction)?;
 
         // Update the object cache
-        let mut cache = self.lock_table[object_ref.0.to_shard() % self.lock_table.len()].lock();
+        let mut cache = self.lock_table[object_ref.0.to_shard() % self.lock_table.len()].write();
 
         cache.insert(
             object_ref.0,
