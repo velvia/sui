@@ -225,14 +225,14 @@ impl AuthorityServer {
             }
         };
 
-        self.server.increment_packets_processed();
+        let processed = self.server.increment_packets_processed();
 
-        if self.server.packets_processed() % 5000 == 0 {
+        if processed % 5000 == 0 {
             info!(
                 "{}:{} has processed {} packets",
                 self.server.base_address,
                 self.server.base_port,
-                self.server.packets_processed()
+                processed
             );
         }
 

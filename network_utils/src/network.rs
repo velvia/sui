@@ -192,8 +192,8 @@ impl NetworkServer {
         self.packets_processed.load(Ordering::Relaxed)
     }
 
-    pub fn increment_packets_processed(&self) {
-        self.packets_processed.fetch_add(1, Ordering::Relaxed);
+    pub fn increment_packets_processed(&self) -> usize {
+        self.packets_processed.fetch_add(1, Ordering::Relaxed)
     }
 
     pub fn user_errors(&self) -> usize {
