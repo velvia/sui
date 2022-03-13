@@ -2,18 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
-use rocksdb::{Options, ColumnFamilyDescriptor};
-use std::collections::BTreeSet;
+use rocksdb::{ColumnFamilyDescriptor, Options};
+use std::collections::{BTreeSet, HashMap};
 use std::convert::TryInto;
 use std::path::Path;
 
+use rocksdb::MultiThreaded;
 use std::sync::atomic::AtomicU64;
 use sui_types::base_types::SequenceNumber;
 use sui_types::batch::{SignedBatch, TxSequenceNumber};
 use tracing::warn;
 use typed_store::rocks::{DBBatch, DBMap, TypedStoreError};
-use rocksdb::{MultiThreaded};
-
 
 use std::sync::atomic::Ordering;
 use typed_store::{reopen, traits::Map};
@@ -21,6 +20,64 @@ use typed_store::{reopen, traits::Map};
 pub type AuthorityStore = SuiDataStore<true>;
 #[allow(dead_code)]
 pub type ReplicaStore = SuiDataStore<false>;
+
+const NUM_SHARDS: usize = 2048;
+
+struct CachedObjectItem {
+    pub object_ref: ObjectRef,
+    pub lock: Option<TransactionDigest>,
+    pub object: Object,
+}
+
+struct AquiredLocks<'a>(
+    HashMap<usize, parking_lot::MutexGuard<'a, HashMap<ObjectID, CachedObjectItem>>>,
+);
+
+impl<'a> AquiredLocks<'a> {
+    fn insert_object(
+        &mut self,
+        object_ref: ObjectRef,
+        object: Object,
+    ) -> Option<(ObjectRef, Object)> {
+        let shard = object_ref.0.to_shard() % NUM_SHARDS;
+        if let Some(map) = self.0.get_mut(&shard) {
+            map.insert(
+                object_ref.0,
+                CachedObjectItem {
+                    object_ref,
+                    lock: None,
+                    object,
+                },
+            );
+            return None;
+        }
+
+        return Some((object_ref, object));
+    }
+
+    fn delete_object(&mut self, object_id: &ObjectID) {
+        let shard = object_id.to_shard() % NUM_SHARDS;
+        self.0
+            .get_mut(&shard)
+            .and_then(|map| map.remove(&object_id));
+    }
+
+    fn update_lock(&mut self, object_ref: &ObjectRef, transaction_digest: TransactionDigest) {
+        let shard = object_ref.0.to_shard() % NUM_SHARDS;
+        if let Some(entry) = self.0.get_mut(&shard).unwrap().get_mut(&object_ref.0) {
+            entry.lock = Some(transaction_digest);
+        }
+    }
+
+    fn get_lock(&mut self, object_ref: &ObjectRef) -> Option<Option<TransactionDigest>> {
+        let shard = object_ref.0.to_shard() % NUM_SHARDS;
+        self.0
+            .get_mut(&shard)
+            .unwrap()
+            .get_mut(&object_ref.0)
+            .and_then(|cache_item| Some(cache_item.lock))
+    }
+}
 
 /// ALL_OBJ_VER determines whether we want to store all past
 /// versions of every object in the store. Authority doesn't store
@@ -83,7 +140,7 @@ pub struct SuiDataStore<const ALL_OBJ_VER: bool> {
     schedule: DBMap<ObjectID, SequenceNumber>,
 
     /// Internal vector of locks to manage concurrent writes to the database
-    lock_table: Vec<parking_lot::Mutex<()>>,
+    lock_table: Vec<parking_lot::Mutex<HashMap<ObjectID, CachedObjectItem>>>,
 
     // Tables used for authority batch structure
     /// A sequence on all executed certificates and effects.
@@ -122,18 +179,22 @@ pub fn open_cf_opts<P: AsRef<Path>>(
     let rocksdb = {
         options.create_if_missing(true);
         options.create_missing_column_families(true);
-        Arc::new(rocksdb::DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
-            &options, &primary, opt_cfs.iter().map(|(name, opts)| ColumnFamilyDescriptor::new(*name, (*opts).clone())),
-        )?)
+        Arc::new(
+            rocksdb::DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+                &options,
+                &primary,
+                opt_cfs
+                    .iter()
+                    .map(|(name, opts)| ColumnFamilyDescriptor::new(*name, (*opts).clone())),
+            )?,
+        )
     };
     Ok(rocksdb)
 }
 
-
 impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
     /// Open an authority store by directory path
     pub fn open<P: AsRef<Path>>(path: P, db_options: Option<Options>) -> AuthorityStore {
-
         let options = db_options.unwrap_or_default();
         let mut point_lookup = options.clone();
         point_lookup.optimize_for_point_lookup(1024 * 1024);
@@ -144,16 +205,16 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
             &[
                 ("objects", &point_lookup),
                 ("all_object_versions", &options),
-                ("owner_index",&options),
-                ("transaction_lock",&point_lookup),
-                ("signed_transactions",&point_lookup),
-                ("certificates",&point_lookup),
-                ("parent_sync",&options),
-                ("signed_effects",&point_lookup),
-                ("sequenced",&options),
-                ("schedule",&options),
-                ("executed_sequence",&options),
-                ("batches",&options),
+                ("owner_index", &options),
+                ("transaction_lock", &point_lookup),
+                ("signed_transactions", &point_lookup),
+                ("certificates", &point_lookup),
+                ("parent_sync", &options),
+                ("signed_effects", &point_lookup),
+                ("sequenced", &options),
+                ("schedule", &options),
+                ("executed_sequence", &options),
+                ("batches", &options),
             ],
         )
         .expect("Cannot open DB.");
@@ -210,9 +271,9 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
             signed_effects,
             sequenced,
             schedule,
-            lock_table: (0..1024)
+            lock_table: (0..NUM_SHARDS)
                 .into_iter()
-                .map(|_| parking_lot::Mutex::new(()))
+                .map(|_| parking_lot::Mutex::new(HashMap::new()))
                 .collect(),
             executed_sequence,
             batches,
@@ -221,21 +282,24 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
     }
 
     /// A function that acquires all locks associated with the objects (in order to avoid deadlocks).
-    fn acquire_locks(&self, _input_objects: &[ObjectRef]) -> Vec<parking_lot::MutexGuard<'_, ()>> {
+    fn acquire_locks<'a, 'b, I>(&'b self, _input_objects: I) -> AquiredLocks<'b>
+    where
+        I: Iterator<Item = &'a ObjectID>,
+    {
         let num_locks = self.lock_table.len();
         // TODO: randomize the lock mapping based on a secret to avoid DoS attacks.
         let lock_number: BTreeSet<usize> = _input_objects
-            .iter()
-            .map(|(_, _, digest)| {
-                usize::from_le_bytes(digest.0[0..8].try_into().unwrap()) % num_locks
-            })
+            // .iter()
+            .map(|object_id| object_id.to_shard() % num_locks)
             .collect();
         // Note: we need to iterate over the sorted unique elements, hence the use of a Set
         //       in order to prevent deadlocks when trying to acquire many locks.
-        lock_number
-            .into_iter()
-            .map(|lock_seq| self.lock_table[lock_seq].lock())
-            .collect()
+        AquiredLocks(
+            lock_number
+                .into_iter()
+                .map(|lock_seq| (lock_seq, self.lock_table[lock_seq].lock()))
+                .collect(),
+        )
     }
 
     // Methods to read the store
@@ -269,7 +333,30 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
 
     /// Get many objects
     pub fn get_objects(&self, _objects: &[ObjectID]) -> Result<Vec<Option<Object>>, SuiError> {
-        self.objects.multi_get(_objects).map_err(|e| e.into())
+        let mut local: HashMap<ObjectID, Option<Object>> = HashMap::new();
+        let mut seek = Vec::new();
+
+        // First read from cache
+        for objid in _objects {
+            // Update the object cache
+            let cache = self.lock_table[objid.to_shard() % self.lock_table.len()].lock();
+            if let Some(cahced_object) = cache.get(&objid) {
+                local.insert(*objid, Some(cahced_object.object.clone()));
+            } else {
+                seek.push(*objid);
+            }
+        }
+
+        // Then fetch from the database
+        let fetched_objects: Result<Vec<Option<Object>>, SuiError> =
+            self.objects.multi_get(&seek[..]).map_err(|e| e.into());
+        let iter = seek.into_iter().zip(fetched_objects?.into_iter());
+        local.extend(iter);
+
+        Ok(_objects
+            .iter()
+            .map(|objid| local.remove(objid).unwrap())
+            .collect())
     }
 
     /// Read a lock or returns Err(TransactionLockDoesNotExist) if the lock does not exist.
@@ -373,28 +460,36 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
 
     /// Insert an object
     pub fn insert_object(&self, object: Object) -> Result<(), SuiError> {
-        self.objects.insert(&object.id(), &object)?;
+        // We only side load objects with a genesis parent transaction.
+        debug_assert!(object.previous_transaction == TransactionDigest::genesis());
+
+        let object_ref = object.to_object_reference();
+        self.objects.insert(&object_ref.0, &object)?;
+        let object_ref = object.to_object_reference();
+        self.transaction_lock.get_or_insert(&object_ref, || None)?;
 
         // Update the index
         if let Some(address) = object.get_single_owner() {
             self.owner_index
-                .insert(&(address, object.id()), &object.to_object_reference())?;
+                .insert(&(address, object_ref.0), &object_ref)?;
         }
 
         // Update the parent
         self.parent_sync
-            .insert(&object.to_object_reference(), &object.previous_transaction)?;
+            .insert(&object_ref, &object.previous_transaction)?;
 
-        // We only side load objects with a genesis parent transaction.
-        debug_assert!(object.previous_transaction == TransactionDigest::genesis());
+        // Update the object cache
+        let mut cache = self.lock_table[object_ref.0.to_shard() % self.lock_table.len()].lock();
 
-        Ok(())
-    }
+        cache.insert(
+            object_ref.0,
+            CachedObjectItem {
+                object_ref,
+                lock: None,
+                object,
+            },
+        );
 
-    /// Initialize a lock to an object reference to None, but keep it
-    /// as it is if a value is already present.
-    pub fn init_transaction_lock(&self, object_ref: ObjectRef) -> Result<(), SuiError> {
-        self.transaction_lock.get_or_insert(&object_ref, || None)?;
         Ok(())
     }
 
@@ -429,13 +524,25 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
         {
             // Aquire the lock to ensure no one else writes when we are in here.
             // MutexGuards are unlocked on drop (ie end of this block)
-            let _mutexes = self.acquire_locks(mutable_input_objects);
+            let mut _mutexes =
+                self.acquire_locks(mutable_input_objects.iter().map(|objref| &objref.0));
 
-            let locks = self.transaction_lock.multi_get(mutable_input_objects)?;
+            // let locks = self.transaction_lock.multi_get(mutable_input_objects)?;
+            let locks = mutable_input_objects.iter().map(|objref| {
+                if let Some(lock) = _mutexes.get_lock(&objref) {
+                    Ok(lock)
+                } else {
+                    // We expect most locks will be found, so use slower .get()
+                    self.transaction_lock
+                        .get(&objref)
+                        .map_err(|e| e.into())
+                        .and_then(|item| item.ok_or(SuiError::TransactionLockDoesNotExist))
+                }
+            });
 
             for (obj_ref, lock) in mutable_input_objects.iter().zip(locks) {
                 // The object / version must exist, and therefore lock initialized.
-                let lock = lock.ok_or(SuiError::TransactionLockDoesNotExist)?;
+                let lock = lock?;
 
                 if let Some(previous_tx_digest) = lock {
                     if previous_tx_digest != tx_digest {
@@ -455,7 +562,14 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
             }
 
             // Atomic write of all locks
-            lock_batch.write().map_err(|e| e.into())
+            let result = lock_batch.write().map_err(|e| e.into());
+
+            // Update cache
+            mutable_input_objects
+                .iter()
+                .for_each(|objref| _mutexes.update_lock(objref, tx_digest.clone()));
+
+            result
 
             // Implicit: drop(_mutexes);
         } // End of critical region
@@ -632,16 +746,37 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
         // This is the critical region: testing the locks and writing the
         // new locks must be atomic, and no writes should happen in between.
         let mut return_seq = None;
+        let mut remaining_to_write: Vec<_>;
         {
             // Acquire the lock to ensure no one else writes when we are in here.
-            let _mutexes = self.acquire_locks(&active_inputs[..]);
+            let mut _mutexes = self.acquire_locks(
+                written
+                    .iter()
+                    .map(|(objid, _)| objid)
+                    .chain(deleted.iter().map(|(objid, _)| objid)),
+            );
 
             // Check the locks are still active
             // TODO: maybe we could just check if the certificate is there instead?
+            /*
             let locks = self.transaction_lock.multi_get(&active_inputs[..])?;
             for object_lock in locks {
                 object_lock.ok_or(SuiError::TransactionLockDoesNotExist)?;
             }
+            */
+
+            let locks : Result<Vec<Option<TransactionDigest>>, SuiError> = active_inputs.iter().map(|objref| {
+                if let Some(lock) = _mutexes.get_lock(&objref) {
+                    Ok(lock)
+                } else {
+                    // We expect most locks will be found, so use slower .get()
+                    self.transaction_lock
+                        .get(&objref)
+                        .map_err(|e| e.into())
+                        .and_then(|item| item.ok_or(SuiError::TransactionLockDoesNotExist))
+                }
+            }).collect();
+            locks?; // Throw the first error
 
             if should_sequence {
                 // Now we are sure we are going to execute, add to the sequence
@@ -662,6 +797,15 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
 
             // Atomic write of all locks & other data
             write_batch.write()?;
+
+            // Update the cache
+            remaining_to_write = written
+                .into_iter()
+                .filter_map(|(_, obj)| _mutexes.insert_object(obj.to_object_reference(), obj))
+                .collect();
+            deleted
+                .into_iter()
+                .for_each(|(obkid, _)| _mutexes.delete_object(&obkid));
 
             // implicit: drop(_mutexes);
         } // End of critical region

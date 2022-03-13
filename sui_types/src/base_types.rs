@@ -502,6 +502,10 @@ impl ObjectID {
             .map_err(|_| ObjectIDParseError::TryFromSliceError)
             .map(ObjectID::from)
     }
+
+    pub fn to_shard(&self) -> usize {
+        usize::from_le_bytes(self.0[0..8].try_into().unwrap())
+    }
 }
 
 #[derive(PartialEq, Clone, Debug, thiserror::Error)]

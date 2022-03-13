@@ -158,7 +158,7 @@ impl ClientServerBenchmark {
 
         let mut opts = Options::default();
         opts.increase_parallelism(self.db_cpus as i32);
-        opts.set_write_buffer_size(4*1024 * 1024 * 1024);
+        opts.set_write_buffer_size(4 * 1024 * 1024 * 1024);
         let store = Arc::new(AuthorityStore::open(path, Some(opts)));
 
         // Seed user accounts.
@@ -192,16 +192,14 @@ impl ClientServerBenchmark {
                 };
 
                 assert!(object.version() == SequenceNumber::from(0));
-                let object_ref = object.to_object_reference();
-                state.init_transaction_lock(object_ref).await;
+
                 account_objects.push((address, object.clone(), keypair));
                 state.insert_object(object).await;
 
                 let gas_object_id = ObjectID::random();
                 let gas_object = Object::with_id_owner_for_testing(gas_object_id, address);
                 assert!(gas_object.version() == SequenceNumber::from(0));
-                let gas_object_ref = gas_object.to_object_reference();
-                state.init_transaction_lock(gas_object_ref).await;
+
                 gas_objects.push(gas_object.clone());
                 state.insert_object(gas_object).await;
             }

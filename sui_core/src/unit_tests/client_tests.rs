@@ -388,7 +388,6 @@ async fn fund_account(
 
             let object_ref: ObjectRef = (object_id, 0.into(), object.digest());
 
-            client_ref.init_transaction_lock(object_ref).await;
             client_ref.insert_object(object).await;
         }
     }
