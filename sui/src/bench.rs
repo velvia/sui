@@ -10,6 +10,7 @@ use move_core_types::account_address::AccountAddress;
 use move_core_types::ident_str;
 use rand::rngs::StdRng;
 use rand::Rng;
+use rayon::prelude::*;
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
 use sui_adapter::genesis;
@@ -165,23 +166,16 @@ impl ClientServerBenchmark {
         opts.set_manual_wal_flush(true);
 
         let store = Arc::new(AuthorityStore::open(path, Some(opts)));
+        let store_bis = store.clone();
 
         // Seed user accounts.
         let rt = Runtime::new().unwrap();
-        let mut account_objects = Vec::new();
-        let mut gas_objects = Vec::new();
-        let state = rt.block_on(async {
-            let state = AuthorityState::new(
-                committee.clone(),
-                public_auth0,
-                Arc::pin(secret_auth0),
-                store,
-                genesis::clone_genesis_compiled_modules(),
-                &mut genesis::get_genesis_context(),
-            )
-            .await;
-            let mut rnd = <StdRng as rand::SeedableRng>::seed_from_u64(0);
-            for _ in 0..self.num_accounts {
+
+        let account_gas_objects: Vec<_> = (0..self.num_accounts)
+            .into_par_iter()
+            .map(|x| {
+                let mut rnd = <StdRng as rand::SeedableRng>::seed_from_u64((x as u64) * 25519);
+
                 let (address, keypair) = get_key_pair();
 
                 let object_id: ObjectID = ObjectID::random();
@@ -198,86 +192,105 @@ impl ClientServerBenchmark {
 
                 assert!(object.version() == SequenceNumber::from(0));
 
-                account_objects.push((address, object.clone(), keypair));
-                state.insert_object(object).await;
-
+                let _ = store_bis.insert_object(object.clone());
                 let gas_object_id = ObjectID::random();
                 let gas_object = Object::with_id_owner_for_testing(gas_object_id, address);
                 assert!(gas_object.version() == SequenceNumber::from(0));
 
-                gas_objects.push(gas_object.clone());
-                state.insert_object(gas_object).await;
-            }
+                let _ = store_bis.insert_object(gas_object.clone());
+
+                ((address, object, keypair), gas_object)
+            })
+            .collect();
+
+        let state = rt.block_on(async {
+            let state = AuthorityState::new(
+                committee.clone(),
+                public_auth0,
+                Arc::pin(secret_auth0),
+                store,
+                genesis::clone_genesis_compiled_modules(),
+                &mut genesis::get_genesis_context(),
+            )
+            .await;
+
             state
         });
 
         info!("Preparing transactions.");
         // Make one transaction per account (transfer transaction + confirmation).
-        let mut transactions: Vec<Bytes> = Vec::new();
-        let mut next_recipient: SuiAddress = get_key_pair().0;
-        for ((account_addr, object, secret), gas_obj) in account_objects.iter().zip(gas_objects) {
-            let object_ref = object.to_object_reference();
-            let gas_object_ref = gas_obj.to_object_reference();
 
-            let data = if self.use_move {
-                // TODO: authority should not require seq# or digets for package in Move calls. Use dummy values
-                let framework_obj_ref = (
-                    ObjectID::from(SUI_FRAMEWORK_ADDRESS),
-                    SequenceNumber::new(),
-                    ObjectDigest::new([0; 32]),
-                );
+        let transactions: Vec<_> = account_gas_objects
+            .par_iter()
+            .map(|((account_addr, object, secret), gas_obj)| {
+                let next_recipient: SuiAddress = get_key_pair().0;
 
-                TransactionData::new_move_call(
-                    *account_addr,
-                    framework_obj_ref,
-                    ident_str!("GAS").to_owned(),
-                    ident_str!("transfer").to_owned(),
-                    Vec::new(),
-                    gas_object_ref,
-                    vec![object_ref],
-                    vec![],
-                    vec![bcs::to_bytes(&AccountAddress::from(next_recipient)).unwrap()],
-                    1000,
-                )
-            } else {
-                TransactionData::new_transfer(
-                    next_recipient,
-                    object_ref,
-                    *account_addr,
-                    gas_object_ref,
-                )
-            };
-            let signature = Signature::new(&data, secret);
-            let transaction = Transaction::new(data, signature);
+                let object_ref = object.to_object_reference();
+                let gas_object_ref = gas_obj.to_object_reference();
 
-            // Set the next recipient to current
-            next_recipient = *account_addr;
+                let data = if self.use_move {
+                    // TODO: authority should not require seq# or digets for package in Move calls. Use dummy values
+                    let framework_obj_ref = (
+                        ObjectID::from(SUI_FRAMEWORK_ADDRESS),
+                        SequenceNumber::new(),
+                        ObjectDigest::new([0; 32]),
+                    );
 
-            // Serialize transaction
-            let serialized_transaction = serialize_transaction(&transaction);
-            assert!(!serialized_transaction.is_empty());
+                    TransactionData::new_move_call(
+                        *account_addr,
+                        framework_obj_ref,
+                        ident_str!("GAS").to_owned(),
+                        ident_str!("transfer").to_owned(),
+                        Vec::new(),
+                        gas_object_ref,
+                        vec![object_ref],
+                        vec![],
+                        vec![bcs::to_bytes(&AccountAddress::from(next_recipient)).unwrap()],
+                        1000,
+                    )
+                } else {
+                    TransactionData::new_transfer(
+                        next_recipient,
+                        object_ref,
+                        *account_addr,
+                        gas_object_ref,
+                    )
+                };
+                let signature = Signature::new(&data, secret);
+                let transaction = Transaction::new(data, signature);
 
-            // Make certificate
-            let mut certificate = CertifiedTransaction {
-                transaction,
-                signatures: Vec::new(),
-            };
-            for i in 0..committee.quorum_threshold() {
-                let (pubx, secx) = keys.get(i).unwrap();
-                let sig = AuthoritySignature::new(&certificate.transaction.data, secx);
-                certificate.signatures.push((*pubx, sig));
-            }
+                // Serialize transaction
+                let serialized_transaction = serialize_transaction(&transaction);
+                assert!(!serialized_transaction.is_empty());
 
-            let serialized_certificate = serialize_cert(&certificate);
-            assert!(!serialized_certificate.is_empty());
+                let mut transactions: Vec<Bytes> = Vec::new();
 
-            if self.benchmark_type != BenchmarkType::CertsOnly {
-                transactions.push(serialized_transaction.into());
-            }
-            if self.benchmark_type != BenchmarkType::TransactionsOnly {
-                transactions.push(serialized_certificate.into());
-            }
-        }
+                if self.benchmark_type != BenchmarkType::CertsOnly {
+                    transactions.push(serialized_transaction.into());
+                }
+
+                if self.benchmark_type != BenchmarkType::TransactionsOnly {
+                    // Make certificate
+                    let mut certificate = CertifiedTransaction {
+                        transaction,
+                        signatures: Vec::new(),
+                    };
+                    for i in 0..committee.quorum_threshold() {
+                        let (pubx, secx) = keys.get(i).unwrap();
+                        let sig = AuthoritySignature::new(&certificate.transaction.data, secx);
+                        certificate.signatures.push((*pubx, sig));
+                    }
+
+                    let serialized_certificate = serialize_cert(&certificate);
+                    assert!(!serialized_certificate.is_empty());
+
+                    transactions.push(serialized_certificate.into());
+                }
+
+                transactions
+            })
+            .flatten()
+            .collect();
 
         (state, transactions)
     }

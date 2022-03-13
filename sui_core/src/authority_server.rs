@@ -230,9 +230,7 @@ impl AuthorityServer {
         if processed % 5000 == 0 {
             info!(
                 "{}:{} has processed {} packets",
-                self.server.base_address,
-                self.server.base_port,
-                processed
+                self.server.base_address, self.server.base_port, processed
             );
         }
 

@@ -5,11 +5,11 @@
 use crate::transport::*;
 use bytes::Bytes;
 use futures::future::FutureExt;
+use std::time::{Duration, Instant};
 use std::{
     net::TcpListener,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use std::time::{Duration, Instant};
 use sui_types::{error::*, serialize::*};
 use tracing::*;
 
@@ -86,13 +86,12 @@ impl NetworkClient {
         let mut responses = Vec::new();
 
         let mut time_start = Instant::now();
-        let mut items_number : usize = 0;
+        let mut items_number: usize = 0;
         loop {
             while in_flight < max_in_flight {
                 let request = match requests.next() {
                     None => {
                         if in_flight == 0 {
-
                             // This is the exit
 
                             let elapsed_time = time_start.elapsed().as_micros();
@@ -122,7 +121,6 @@ impl NetworkClient {
                 in_flight += 1;
             }
             if requests.len() % 2000 == 0 && requests.len() > 0 {
-
                 let elapsed_time = time_start.elapsed().as_micros();
 
                 warn!(
@@ -146,7 +144,7 @@ impl NetworkClient {
                 }
                 Ok(None) => {
                     info!("Socket closed by server");
-                    break
+                    break;
                 }
                 Err(error) => {
                     error!(
@@ -158,7 +156,6 @@ impl NetworkClient {
         }
 
         return Ok(responses);
-
     }
 
     pub fn batch_send<I>(

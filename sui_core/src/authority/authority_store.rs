@@ -765,17 +765,20 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
             }
             */
 
-            let locks : Result<Vec<Option<TransactionDigest>>, SuiError> = active_inputs.iter().map(|objref| {
-                if let Some(lock) = _mutexes.get_lock(&objref) {
-                    Ok(lock)
-                } else {
-                    // We expect most locks will be found, so use slower .get()
-                    self.transaction_lock
-                        .get(&objref)
-                        .map_err(|e| e.into())
-                        .and_then(|item| item.ok_or(SuiError::TransactionLockDoesNotExist))
-                }
-            }).collect();
+            let locks: Result<Vec<Option<TransactionDigest>>, SuiError> = active_inputs
+                .iter()
+                .map(|objref| {
+                    if let Some(lock) = _mutexes.get_lock(&objref) {
+                        Ok(lock)
+                    } else {
+                        // We expect most locks will be found, so use slower .get()
+                        self.transaction_lock
+                            .get(&objref)
+                            .map_err(|e| e.into())
+                            .and_then(|item| item.ok_or(SuiError::TransactionLockDoesNotExist))
+                    }
+                })
+                .collect();
             locks?; // Throw the first error
 
             if should_sequence {
