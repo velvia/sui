@@ -159,6 +159,11 @@ impl ClientServerBenchmark {
         let mut opts = Options::default();
         opts.increase_parallelism(self.db_cpus as i32);
         opts.set_write_buffer_size(4 * 1024 * 1024 * 1024);
+        opts.enable_statistics();
+        opts.set_stats_dump_period_sec(3);
+        opts.set_enable_pipelined_write(true);
+        opts.set_manual_wal_flush(true);
+        
         let store = Arc::new(AuthorityStore::open(path, Some(opts)));
 
         // Seed user accounts.
