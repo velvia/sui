@@ -163,7 +163,8 @@ impl ClientServerBenchmark {
         opts.set_stats_dump_period_sec(3);
         opts.set_enable_pipelined_write(true);
         opts.set_manual_wal_flush(true);
-        
+        opts.set_unordered_write(true);
+
         let store = Arc::new(AuthorityStore::open(path, Some(opts)));
 
         // Seed user accounts.
