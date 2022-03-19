@@ -86,6 +86,9 @@ pub struct AuthorityState {
     /// and create batches for this authority.
     /// Keep as None if there is no need for this.
     batch_channels: Option<(BatchSender, BroadcastSender)>,
+
+    // DB access semaphore
+    db_access: tokio::sync::Semaphore,
 }
 
 /// The authority state encapsulates all state, drives execution, and ensures safety.
@@ -337,10 +340,16 @@ impl AuthorityState {
         transaction.check_signature()?;
         let transaction_digest = transaction.digest();
 
-        // Ensure an idempotent answer.
-        if self
+        let exists = {
+            let _a_permit = self.db_access.acquire().await.unwrap();
+            self
             ._database
             .signed_transaction_exists(&transaction_digest)?
+            // drop lock
+        };
+
+        // Ensure an idempotent answer.
+        if exists
         {
             let transaction_info = self.make_transaction_info(&transaction_digest).await?;
             return Ok(transaction_info);
@@ -390,8 +399,14 @@ impl AuthorityState {
     ) -> SuiResult<TransactionInfoResponse> {
         let transaction_digest = *confirmation_transaction.certificate.digest();
 
+        let exists = {
+            let _a_permit = self.db_access.acquire().await.unwrap();
+            self._database.signed_effects_exists(&transaction_digest)? 
+            // drop lock
+        };
+
         // Ensure an idempotent answer.
-        if self._database.signed_effects_exists(&transaction_digest)? {
+        if exists {
             let transaction_info = self.make_transaction_info(&transaction_digest).await?;
             return Ok(transaction_info);
         }
@@ -765,6 +780,7 @@ impl AuthorityState {
                 .expect("We defined natives to not fail here"),
             _database: store,
             batch_channels: None,
+            db_access: tokio::sync::Semaphore::new(4),
         }
     }
 
@@ -864,6 +880,7 @@ impl AuthorityState {
         mutable_input_objects: &[ObjectRef],
         signed_transaction: SignedTransaction,
     ) -> Result<(), SuiError> {
+        let _a_permit = self.db_access.acquire().await.unwrap();
         self._database
             .set_transaction_lock(mutable_input_objects, signed_transaction)
     }
@@ -874,6 +891,7 @@ impl AuthorityState {
         certificate: CertifiedTransaction,
         signed_effects: SignedTransactionEffects,
     ) -> Result<(u64, TransactionInfoResponse), SuiError> {
+        let _a_permit = self.db_access.acquire().await.unwrap();
         self._database
             .update_state(temporary_store, certificate, signed_effects)
     }
@@ -906,6 +924,7 @@ impl AuthorityState {
         &self,
         _objects: &[ObjectID],
     ) -> Result<Vec<Option<Object>>, SuiError> {
+        let _a_permit = self.db_access.acquire().await.unwrap();
         self._database.get_objects(_objects)
     }
 
