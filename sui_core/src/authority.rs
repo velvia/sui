@@ -780,7 +780,7 @@ impl AuthorityState {
                 .expect("We defined natives to not fail here"),
             _database: store,
             batch_channels: None,
-            db_access: tokio::sync::Semaphore::new(4),
+            db_access: tokio::sync::Semaphore::new(usize::min(12, num_cpus::get())),
         }
     }
 
