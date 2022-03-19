@@ -14,7 +14,7 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use sui_adapter::adapter;
+use sui_adapter::adapter::{self, SuiMoveVM};
 use sui_types::{
     base_types::*,
     batch::UpdateItem,
@@ -76,7 +76,7 @@ pub struct AuthorityState {
 
     /// Move native functions that are available to invoke
     _native_functions: NativeFunctionTable,
-    move_vm: Arc<adapter::MoveVM>,
+    move_vm: Arc<adapter::SuiMoveVM>,
 
     /// The database
     _database: Arc<AuthorityStore>,
@@ -137,7 +137,7 @@ impl AuthorityState {
                     }
                 );
             }
-            InputObjectKind::OwnedMoveObject((object_id, sequence_number, object_digest)) => {
+            InputObjectKind::OwnedMoveObject((object_id, sequence_number, _object_digest)) => {
                 fp_ensure!(
                     sequence_number <= SequenceNumber::MAX,
                     SuiError::InvalidSequenceNumber
@@ -153,7 +153,13 @@ impl AuthorityState {
                     }
                 );
 
-                // Check the digest matches
+                /*
+
+                // We will perform this check when we lookup the
+                // lock in the database. At this point if there is
+                // no match this will fail. No need to recompute
+                // hashes here.
+
                 fp_ensure!(
                     object.digest() == object_digest,
                     SuiError::InvalidObjectDigest {
@@ -161,6 +167,8 @@ impl AuthorityState {
                         expected_digest: object_digest
                     }
                 );
+
+                */
 
                 match object.owner {
                     Owner::SharedImmutable => {
@@ -507,15 +515,18 @@ impl AuthorityState {
         let mut tx_ctx = TxContext::new(&transaction.sender_address(), &transaction_digest);
 
         let gas_object_id = transaction.gas_payment_object_ref().0;
-        let mut temporary_store =
-            AuthorityTemporaryStore::new(self._database.clone(), &objects_by_kind, tx_ctx.digest());
+        let mut temporary_store = AuthorityTemporaryStore::new(
+            self._database.clone(),
+            &objects_by_kind,
+            transaction_digest,
+        );
         let status = execution_engine::execute_transaction(
             &mut temporary_store,
             transaction.clone(),
             objects_by_kind,
             &mut tx_ctx,
             &self.move_vm,
-            self._native_functions.clone(),
+            &self._native_functions,
         )?;
         debug!(
             gas_used = status.gas_used(),
@@ -832,6 +843,8 @@ impl AuthorityState {
         let package_id = ObjectID::from(*modules[0].self_id().address());
         let natives = self._native_functions.clone();
         let vm = adapter::verify_and_link(&temporary_store, &modules, package_id, natives)?;
+        let vm = SuiMoveVM::new(vm);
+
         if let ExecutionStatus::Failure { error, .. } = adapter::store_package_and_init_modules(
             &mut temporary_store,
             &vm,
