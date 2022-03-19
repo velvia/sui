@@ -79,6 +79,8 @@ struct ClientServerBenchmark {
     use_move: bool,
     #[structopt(long, default_value = "100")]
     batch_size: u64,
+    #[structopt(long, default_value = "0")]
+    authority_threads: u64,
 }
 #[derive(Debug, Clone, PartialEq, EnumString)]
 enum BenchmarkType {
@@ -129,10 +131,18 @@ fn main() {
         );
     }
 
+    let authority_threads = if benchmark.authority_threads == 0 {
+        num_cpus::get() as usize
+    }
+    else {
+        benchmark.authority_threads as usize
+    };
+
     thread::spawn(move || {
         let runtime = Builder::new_multi_thread()
             .enable_all()
             .thread_stack_size(32 * 1024 * 1024)
+            .worker_threads(authority_threads)
             .build()
             .unwrap();
 
