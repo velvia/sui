@@ -1,7 +1,6 @@
 // Copyright (c) 2022, Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::fs;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -17,7 +16,6 @@ use dropshot::{
 use ed25519_dalek::ed25519::signature::Signature;
 use futures::lock::Mutex;
 use futures::stream::{futures_unordered::FuturesUnordered, StreamExt as _};
-use futures::TryFutureExt;
 use http::Response;
 use hyper::{Body, StatusCode};
 use move_core_types::identifier::Identifier;
@@ -26,14 +24,16 @@ use move_core_types::value::MoveStructLayout;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use serde_with::hex::Hex;
+use serde_with::serde_as;
 use tokio::task::{self, JoinHandle};
-use toml::Serializer;
 use tracing::{error, info};
 
 use sui::config::{GenesisConfig, NetworkConfig};
 use sui::gateway::{EmbeddedGatewayConfig, GatewayType};
 use sui::sui_commands;
 use sui::sui_json::{resolve_move_function_args, SuiJsonValue};
+use sui_core::gateway_state::gateway_responses::TransactionSignatureRequest;
 use sui_core::gateway_state::GatewayClient;
 use sui_types::base_types::*;
 use sui_types::committee::Committee;
@@ -245,7 +245,7 @@ async fn genesis(rqctx: Arc<RequestContext<ServerContext>>) -> Result<Response<B
         )
     })?;
 
-    let (network_config, accounts, keystore) =
+    let (network_config, accounts, _keystore) =
         sui_commands::genesis(genesis_conf).await.map_err(|err| {
             custom_http_error(
                 StatusCode::FAILED_DEPENDENCY,
@@ -521,238 +521,219 @@ async fn get_objects(
         });
     }
 
-    custom_http_response(StatusCode::OK, GetObjectsResponse { objects })
-}
+    impl NamedObjectRef {
+        fn from((object_id, version, digest): ObjectRef) -> Self {
+            Self {
+                object_id,
+                version,
+                digest,
+            }
+        }
+    }
 
-/**
-Request containing the object schema for which info is to be retrieved.
+    /**
+    Request containing the object schema for which info is to be retrieved.
 
-If owner is specified we look for this object in that address's account store,
-otherwise we look for it in the shared object store.
-*/
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct GetObjectSchemaRequest {
-    /** Required; Hex code as string representing the object id */
-    object_id: String,
-}
+    If owner is specified we look for this object in that address's account store,
+    otherwise we look for it in the shared object store.
+    */
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    #[serde(rename_all = "camelCase")]
+    struct GetObjectSchemaRequest {
+        /** Required; Hex code as string representing the object id */
+        object_id: String,
+    }
 
-/**
-Response containing the information of an object schema if found, otherwise an error
-is returned.
-*/
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct ObjectSchemaResponse {
-    /** JSON representation of the object schema */
-    schema: serde_json::Value,
-}
+    /**
+    Response containing the information of an object schema if found, otherwise an error
+    is returned.
+    */
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    #[serde(rename_all = "camelCase")]
+    struct ObjectSchemaResponse {
+        /** JSON representation of the object schema */
+        schema: serde_json::Value,
+    }
 
-/**
-Returns the schema for a specified object.
- */
-#[endpoint {
+    /**
+    Returns the schema for a specified object.
+     */
+    #[endpoint {
     method = GET,
     path = "/object_schema",
     tags = [ "wallet" ],
 }]
-async fn object_schema(
-    ctx: Arc<RequestContext<ServerContext>>,
-    query: Query<GetObjectSchemaRequest>,
-) -> Result<Response<Body>, HttpError> {
-    let mut state = ctx.context().server_state.lock().await;
-    let state = state.as_mut().ok_or_else(server_state_error)?;
-    let object_info_params = query.into_inner();
+    async fn object_schema(
+        ctx: Arc<RequestContext<ServerContext>>,
+        query: Query<GetObjectSchemaRequest>,
+    ) -> Result<Response<Body>, HttpError> {
+        let mut state = ctx.context().server_state.lock().await;
+        let state = state.as_mut().ok_or_else(server_state_error)?;
+        let object_info_params = query.into_inner();
 
-    let object_id = match ObjectID::try_from(object_info_params.object_id) {
-        Ok(object_id) => object_id,
-        Err(error) => {
-            return Err(custom_http_error(
-                StatusCode::BAD_REQUEST,
-                format!("{error}"),
-            ));
-        }
-    };
+        let object_id = match ObjectID::try_from(object_info_params.object_id) {
+            Ok(object_id) => object_id,
+            Err(error) => {
+                return Err(custom_http_error(
+                    StatusCode::BAD_REQUEST,
+                    format!("{error}"),
+                ));
+            }
+        };
 
-    let layout = match state.gateway.get_object_info(object_id).await {
-        Ok(ObjectRead::Exists(_, _, layout)) => layout,
-        Ok(ObjectRead::Deleted(_)) => {
-            return Err(custom_http_error(
-                StatusCode::NOT_FOUND,
-                format!("Object ({object_id}) was deleted."),
-            ));
-        }
-        Ok(ObjectRead::NotExists(_)) => {
-            return Err(custom_http_error(
-                StatusCode::NOT_FOUND,
-                format!("Object ({object_id}) does not exist."),
-            ));
-        }
-        Err(error) => {
-            return Err(custom_http_error(
-                StatusCode::NOT_FOUND,
+        let layout = match state.gateway.get_object_info(object_id).await {
+            Ok(ObjectRead::Exists(_, _, layout)) => layout,
+            Ok(ObjectRead::Deleted(_)) => {
+                return Err(custom_http_error(
+                    StatusCode::NOT_FOUND,
+                    format!("Object ({object_id}) was deleted."),
+                ));
+            }
+            Ok(ObjectRead::NotExists(_)) => {
+                return Err(custom_http_error(
+                    StatusCode::NOT_FOUND,
+                    format!("Object ({object_id}) does not exist."),
+                ));
+            }
+            Err(error) => {
+                return Err(custom_http_error(
+                    StatusCode::NOT_FOUND,
+                    format!("Error while getting object info: {:?}", error),
+                ));
+            }
+        };
+        let schema = serde_json::to_value(layout).map_err(|error| {
+            custom_http_error(
+                StatusCode::FAILED_DEPENDENCY,
                 format!("Error while getting object info: {:?}", error),
-            ));
-        }
-    };
-    let schema = serde_json::to_value(layout).map_err(|error| {
-        custom_http_error(
-            StatusCode::FAILED_DEPENDENCY,
-            format!("Error while getting object info: {:?}", error),
-        )
-    })?;
+            )
+        })?;
 
-    custom_http_response(StatusCode::OK, ObjectSchemaResponse { schema })
-}
+        custom_http_response(StatusCode::OK, ObjectSchemaResponse { schema })
+    }
 
-/**
-Request containing the object for which info is to be retrieved.
+    /**
+    Request containing the object for which info is to be retrieved.
 
-If owner is specified we look for this object in that address's account store,
-otherwise we look for it in the shared object store.
-*/
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct GetObjectInfoRequest {
-    /** Required; Hex code as string representing the object id */
-    object_id: String,
-}
+    If owner is specified we look for this object in that address's account store,
+    otherwise we look for it in the shared object store.
+    */
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    #[serde(rename_all = "camelCase")]
+    struct GetObjectInfoRequest {
+        /** Required; Hex code as string representing the object id */
+        object_id: String,
+    }
 
-/**
-Response containing the information of an object if found, otherwise an error
-is returned.
-*/
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct ObjectInfoResponse {
-    /** Hex code as string representing the owner's address */
-    owner: String,
-    /** Sequence number of the object */
-    version: String,
-    /** Hex code as string representing the object id */
-    id: String,
-    /** Boolean representing if the object is mutable */
-    readonly: String,
-    /** Type of object, i.e. Coin */
-    obj_type: String,
-    /** JSON representation of the object data */
-    data: serde_json::Value,
-}
+    /**
+    Response containing the information of an object if found, otherwise an error
+    is returned.
+    */
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    #[serde(rename_all = "camelCase")]
+    struct ObjectInfoResponse {
+        /** Hex code as string representing the owner's address */
+        owner: String,
+        /** Sequence number of the object */
+        version: String,
+        /** Hex code as string representing the object id */
+        id: String,
+        /** Boolean representing if the object is mutable */
+        readonly: String,
+        /** Type of object, i.e. Coin */
+        obj_type: String,
+        /** JSON representation of the object data */
+        data: serde_json::Value,
+    }
 
-/**
-Returns the object information for a specified object.
- */
-#[endpoint {
+    /**
+    Returns the object information for a specified object.
+     */
+    #[endpoint {
     method = GET,
     path = "/object_info",
     tags = [ "wallet" ],
 }]
-async fn object_info(
-    ctx: Arc<RequestContext<ServerContext>>,
-    query: Query<GetObjectInfoRequest>,
-) -> Result<Response<Body>, HttpError> {
-    let mut state = ctx.context().server_state.lock().await;
-    let state = state.as_mut().ok_or_else(server_state_error)?;
+    async fn object_info(
+        ctx: Arc<RequestContext<ServerContext>>,
+        query: Query<GetObjectInfoRequest>,
+    ) -> Result<Response<Body>, HttpError> {
+        let mut state = ctx.context().server_state.lock().await;
+        let state = state.as_mut().ok_or_else(server_state_error)?;
 
-    let object_info_params = query.into_inner();
-    let object_id = ObjectID::try_from(object_info_params.object_id)
-        .map_err(|error| custom_http_error(StatusCode::BAD_REQUEST, format!("{error}")))?;
+        let object_info_params = query.into_inner();
+        let object_id = ObjectID::try_from(object_info_params.object_id)
+            .map_err(|error| custom_http_error(StatusCode::BAD_REQUEST, format!("{error}")))?;
 
-    let (_, object, layout) = get_object_info(state, object_id).await?;
-    let object_data = object.to_json(&layout).unwrap_or_else(|_| json!(""));
-    custom_http_response(
-        StatusCode::OK,
-        &ObjectInfoResponse {
-            owner: format!("{:?}", object.owner),
-            version: format!("{:?}", object.version().value()),
-            id: format!("{:?}", object.id()),
-            readonly: format!("{:?}", object.is_read_only()),
-            obj_type: object
-                .data
-                .type_()
-                .map_or("Unknown Type".to_owned(), |type_| format!("{}", type_)),
-            data: object_data,
-        },
-    )
-}
+        let (_, object, layout) = get_object_info(state, object_id).await?;
+        let object_data = object.to_json(&layout).unwrap_or_else(|_| json!(""));
+        custom_http_response(
+            StatusCode::OK,
+            &ObjectInfoResponse {
+                owner: format!("{:?}", object.owner),
+                version: format!("{:?}", object.version().value()),
+                id: format!("{:?}", object.id()),
+                readonly: format!("{:?}", object.is_read_only()),
+                obj_type: object
+                    .data
+                    .type_()
+                    .map_or("Unknown Type".to_owned(), |type_| format!("{}", type_)),
+                data: object_data,
+            },
+        )
+    }
 
-/**
-Request containing the information needed to execute a transfer transaction.
-*/
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct TransferTransactionRequest {
-    /** Required; Hex code as string representing the address to be sent from */
-    from_address: String,
-    /** Required; Hex code as string representing the object id */
-    object_id: String,
-    /** Required; Hex code as string representing the address to be sent to */
-    to_address: String,
-    /** Required; Hex code as string representing the gas object id to be used as payment */
-    gas_object_id: String,
-}
+    /**
+    Request containing the information needed to execute a transfer transaction.
+    */
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    #[serde(rename_all = "camelCase")]
+    struct TransferTransactionRequest {
+        /** Required; Hex code as string representing the address to be sent from */
+        from_address: String,
+        /** Required; Hex code as string representing the object id */
+        object_id: String,
+        /** Required; Hex code as string representing the address to be sent to */
+        to_address: String,
+        /** Required; Hex code as string representing the gas object id to be used as payment */
+        gas_object_id: String,
+    }
 
-/*/**
-Response containing the summary of effects made on an object and the certificate
-associated with the transaction that verifies the transaction.
-*/
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct TransactionResponse {
-    /** Integer representing the actual cost of the transaction */
-    gas_used: u64,
-    /** JSON representation of the list of resulting effects on the object */
-    object_effects_summary: serde_json::Value,
-    /** JSON representation of the certificate verifying the transaction */
-    certificate: serde_json::Value,
-}*/
+    /**
+    Transfer object from one address to another. Gas will be paid using the gas
+    provided in the request. This will be done through a native transfer
+    transaction that does not require Move VM executions, hence is much cheaper.
 
-/**
-Transfer object from one address to another. Gas will be paid using the gas
-provided in the request. This will be done through a native transfer
-transaction that does not require Move VM executions, hence is much cheaper.
+    Notes:
+    - Non-coin objects cannot be transferred natively and will require a Move call
 
-Notes:
-- Non-coin objects cannot be transferred natively and will require a Move call
-
-Example TransferTransactionRequest
-{
-    "from_address": "1DA89C9279E5199DDC9BC183EB523CF478AB7168",
-    "object_id": "4EED236612B000B9BEBB99BA7A317EFF27556A0C",
-    "to_address": "5C20B3F832F2A36ED19F792106EC73811CB5F62C",
-    "gas_object_id": "96ABE602707B343B571AAAA23E3A4594934159A5"
-}
- */
-#[endpoint {
+    Example TransferTransactionRequest
+    {
+        "from_address": "1DA89C9279E5199DDC9BC183EB523CF478AB7168",
+        "object_id": "4EED236612B000B9BEBB99BA7A317EFF27556A0C",
+        "to_address": "5C20B3F832F2A36ED19F792106EC73811CB5F62C",
+        "gas_object_id": "96ABE602707B343B571AAAA23E3A4594934159A5"
+    }
+     */
+    #[endpoint {
     method = POST,
     path = "/transfer",
     tags = [ "wallet" ],
 }]
-async fn transfer_object(
-    ctx: Arc<RequestContext<ServerContext>>,
-    request: TypedBody<TransferTransactionRequest>,
-) -> Result<Response<Body>, HttpError> {
-    let mut state = ctx.context().server_state.lock().await;
-    let state = state.as_mut().ok_or_else(server_state_error)?;
-    let transfer_order_params = request.into_inner();
+    async fn transfer_object(
+        ctx: Arc<RequestContext<ServerContext>>,
+        request: TypedBody<TransferTransactionRequest>,
+    ) -> Result<Response<Body>, HttpError> {
+        let mut state = ctx.context().server_state.lock().await;
+        let state = state.as_mut().ok_or_else(server_state_error)?;
+        let request = request.into_inner();
 
-    let to_address =
-        decode_bytes_hex(transfer_order_params.to_address.as_str()).map_err(|error| {
-            custom_http_error(
-                StatusCode::BAD_REQUEST,
-                format!("Could not decode to address from hex {error}"),
-            )
-        })?;
-    let object_id = ObjectID::try_from(transfer_order_params.object_id)
-        .map_err(|error| custom_http_error(StatusCode::BAD_REQUEST, format!("{error}")))?;
-    let gas_object_id = ObjectID::try_from(transfer_order_params.gas_object_id)
-        .map_err(|error| custom_http_error(StatusCode::BAD_REQUEST, format!("{error}")))?;
-    let owner = decode_bytes_hex(transfer_order_params.from_address.as_str()).map_err(|error| {
-        custom_http_error(
-            StatusCode::BAD_REQUEST,
-            format!("Could not decode address from hex {error}"),
-        )
-    })?;
+        let signature_req = transfer_object_internal(state, request)
+            .await
+            .map_err(|error| custom_http_error(StatusCode::BAD_REQUEST, error.to_string()))?;
+
+        custom_http_response(StatusCode::OK, JsonResponse::from(signature_req)?)
+    }
 
     let response: Result<_, anyhow::Error> = async {
         let data = state
@@ -976,7 +957,7 @@ tags = [ "wallet" ],
 async fn execute_transaction(
     ctx: Arc<RequestContext<ServerContext>>,
     response: TypedBody<TransactionSignatureResponse>,
-) -> Result<HttpResponseOk<TransactionResponse>, HttpError> {
+) -> Result<HttpResponseOk<JsonResponse>, HttpError> {
     let response = response.into_inner();
     let mut state = ctx.context().server_state.lock().await;
     let state = state.as_mut().ok_or_else(server_state_error)?;
@@ -996,13 +977,13 @@ async fn execute_transaction(
     .await;
     let response = response
         .map_err(|err| custom_http_error(StatusCode::FAILED_DEPENDENCY, err.to_string()))?;
-    Ok(HttpResponseOk(TransactionResponse(
+    Ok(HttpResponseOk(JsonResponse(
         serde_json::to_value(response)
             .map_err(|err| custom_http_error(StatusCode::FAILED_DEPENDENCY, err.to_string()))?,
     )))
 }
 
-async fn get_object_effects(
+/*async fn get_object_effects(
     state: &ServerState,
     transaction_effects: TransactionEffects,
 ) -> Result<HashMap<String, Vec<HashMap<String, String>>>, HttpError> {
@@ -1056,9 +1037,9 @@ async fn get_object_effects(
         get_events(transaction_effects.events)?,
     );
     Ok(object_effects_summary)
-}
+}*/
 
-fn get_events(events: Vec<Event>) -> Result<Vec<HashMap<String, String>>, HttpError> {
+/*fn get_events(events: Vec<Event>) -> Result<Vec<HashMap<String, String>>, HttpError> {
     let mut effects = Vec::new();
     for event in events {
         let mut effect: HashMap<String, String> = HashMap::new();
@@ -1067,9 +1048,9 @@ fn get_events(events: Vec<Event>) -> Result<Vec<HashMap<String, String>>, HttpEr
         effects.push(effect);
     }
     Ok(effects)
-}
+}*/
 
-async fn get_obj_ref_effects(
+/*async fn get_obj_ref_effects(
     state: &ServerState,
     object_refs: Vec<ObjectRef>,
 ) -> Result<Vec<HashMap<String, String>>, HttpError> {
@@ -1081,9 +1062,9 @@ async fn get_obj_ref_effects(
         effects.push(effect);
     }
     Ok(effects)
-}
+}*/
 
-async fn get_effect(
+/*async fn get_effect(
     state: &ServerState,
     object_id: ObjectID,
     sequence_number: SequenceNumber,
@@ -1110,7 +1091,7 @@ async fn get_effect(
     );
     effect.insert("object_digest".to_string(), format!("{:?}", object_digest));
     Ok(effect)
-}
+}*/
 
 async fn get_object_info(
     state: &ServerState,
@@ -1143,7 +1124,7 @@ async fn get_object_info(
 async fn handle_move_call(
     call_params: CallRequest,
     state: &mut ServerState,
-) -> Result<TransactionSignatureRequest, anyhow::Error> {
+) -> Result<JsonResponse, anyhow::Error> {
     let module = Identifier::from_str(&call_params.module.to_owned())?;
     let function = Identifier::from_str(&call_params.function.to_owned())?;
     let args = call_params.args;
@@ -1242,7 +1223,7 @@ async fn handle_move_call(
         }
     };
 
-    Ok(TransactionSignatureRequest(serde_json::to_value(&sig_req)?))
+    Ok(JsonResponse(serde_json::to_value(&sig_req)?))
 }
 
 fn custom_http_response<T: Serialize + JsonSchema>(
@@ -1265,9 +1246,17 @@ fn custom_http_error(status_code: http::StatusCode, message: String) -> HttpErro
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct TransactionSignatureRequest(Value);
+#[serde(rename_all = "camelCase", transparent)]
+struct JsonResponse(Value);
 
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct TransactionResponse(Value);
+impl JsonResponse {
+    fn from<T>(data: T) -> Result<Self, HttpError>
+    where
+        T: Serialize,
+    {
+        let json = serde_json::to_value(&data)
+            .map_err(|err| custom_http_error(StatusCode::FAILED_DEPENDENCY, err.to_string()))?;
+
+        Ok(Self(json))
+    }
+}
