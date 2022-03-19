@@ -51,6 +51,7 @@ impl NetworkClient {
     }
 
     pub async fn send_recv_bytes(&self, buf: Vec<u8>) -> Result<SerializedMessage, SuiError> {
+        // println!("enter send_recv_bytes");
         match self.send_recv_bytes_internal(buf).await {
             Err(error) => Err(SuiError::ClientIoError {
                 error: format!("{}", error),
@@ -58,9 +59,16 @@ impl NetworkClient {
             Ok(response) => {
                 // Parse reply
                 match deserialize_message(&response[..]) {
-                    Ok(SerializedMessage::Error(error)) => Err(*error),
-                    Ok(message) => Ok(message),
-                    Err(_) => Err(SuiError::InvalidDecoding),
+                    Ok(SerializedMessage::Error(error)) => {
+                        println!("SerializedMessage::Error(error)");
+                        Err(*error)},
+                    Ok(message) => {
+                        // println!("message");
+                        Ok(message)},
+                    Err(_) => {
+                        println!("Err(SuiError::InvalidDecoding)");
+                        Err(SuiError::InvalidDecoding)
+                    },
                     // _ => Err(SuiError::UnexpectedMessage),
                 }
             }

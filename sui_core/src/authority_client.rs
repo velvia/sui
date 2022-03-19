@@ -67,10 +67,13 @@ impl AuthorityAPI for AuthorityClient {
         &self,
         transaction: ConfirmationTransaction,
     ) -> Result<TransactionInfoResponse, SuiError> {
+        // println!("enter handle_confirmation_transaction");
         let response = self
             .0
             .send_recv_bytes(serialize_cert(&transaction.certificate))
             .await?;
+        
+        // println!("before deserialize_transaction_info");
         deserialize_transaction_info(response)
     }
 

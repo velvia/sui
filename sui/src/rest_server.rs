@@ -914,8 +914,8 @@ async fn call(
     let package_object_id = ObjectID::from_hex_literal(&call_params.package_object_id)
         .map_err(|error| custom_http_error(StatusCode::FAILED_DEPENDENCY, format!("{error}")))?;
 
-    let mut wallet_context = server_context.wallet_context.lock().await;
-    let wallet_context = wallet_context.as_mut().ok_or_else(|| {
+    let mut wallet_context_lock = server_context.wallet_context.lock().await;
+    let wallet_context = wallet_context_lock.as_mut().ok_or_else(|| {
         custom_http_error(
             StatusCode::FAILED_DEPENDENCY,
             "Wallet Context does not exist.".to_string(),
@@ -1023,6 +1023,8 @@ async fn call(
             let gas_used = match effects.status {
                 ExecutionStatus::Success { gas_used } => gas_used,
                 ExecutionStatus::Failure { gas_used, error } => {
+                    println!("Error calling move function: {:#?}, gas used {}",
+                    error, gas_used);
                     return Err(custom_http_error(
                         StatusCode::FAILED_DEPENDENCY,
                         format!(

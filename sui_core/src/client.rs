@@ -26,6 +26,7 @@ use typed_store::rocks::open_cf;
 use typed_store::Map;
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -51,6 +52,7 @@ pub struct ClientAddressManager<A> {
     authorities: AuthorityAggregator<A>,
     store: client_store::ClientAddressManagerStore,
     address_states: BTreeMap<SuiAddress, ClientState>,
+    lock: Mutex<u64>
 }
 impl<A> ClientAddressManager<A>
 where
@@ -66,6 +68,7 @@ where
             store: client_store::ClientAddressManagerStore::open(path),
             authorities: AuthorityAggregator::new(committee, authority_clients),
             address_states: BTreeMap::new(),
+            lock: Mutex::new(0)
         }
     }
 
@@ -132,6 +135,7 @@ pub struct ClientState {
     secret: StableSyncSigner,
     /// Persistent store for client
     store: client_store::ClientSingleAddressStore,
+    lock: Mutex<u64>,
 }
 
 // Operations are considered successful when they successfully reach a quorum of authorities.
@@ -232,6 +236,7 @@ impl ClientState {
             address,
             secret,
             store: client_store::ClientSingleAddressStore::new(path),
+            lock: Mutex::new(0)
         }
     }
 
@@ -244,6 +249,7 @@ impl ClientState {
             address,
             secret,
             store,
+            lock: Mutex::new(0)
         }
     }
 
@@ -405,16 +411,23 @@ impl ClientState {
     /// The caller has to explicitly find which objects are locked
     /// TODO: always return true for immutable objects https://github.com/MystenLabs/fastnft/issues/305
     fn can_lock_or_unlock(&self, transaction: &Transaction) -> Result<bool, SuiError> {
+        println!("can_lock_or_unlock {:?}", transaction.digest());
         let iter_matches = self.store.pending_transactions.multi_get(
             &transaction
                 .input_objects()
                 .iter()
-                .map(|q| q.object_id())
+                .filter_map(|q| match q {
+                    InputObjectKind::MovePackage(_) => None,
+                    InputObjectKind::OwnedMoveObject(w) => Some(w.0),
+                    InputObjectKind::SharedMoveObject(w) => Some(*w),
+                })
                 .collect_vec(),
         )?;
+        // println!("transaction {:?}", transaction);
         if iter_matches.into_iter().any(|match_for_transaction| {
+            // println!("match for transaction {:?}", match_for_transaction);
             matches!(match_for_transaction,
-                // If we find any transaction that isn't the given transaction, we cannot proceed
+                // If we find any transaction that isn’t the given transaction, we cannot proceed
                 Some(o) if o != *transaction)
         }) {
             return Ok(false);
@@ -433,16 +446,26 @@ impl ClientState {
         &self,
         transaction: &Transaction,
     ) -> Result<(), SuiError> {
+        // match self.lock.lock() {
+        //     Ok(_) => println!("Lock acquired for lock"),
+        //     Err(err) => println!("Lock Error during lock {}", err)
+        // };
         if !self.can_lock_or_unlock(transaction)? {
             return Err(SuiError::ConcurrentTransactionError);
         }
+        println!("lock_pending_transaction_objects {:?}", transaction.digest());
         self.store
             .pending_transactions
             .multi_insert(
                 transaction
                     .input_objects()
                     .iter()
-                    .map(|e| (e.object_id(), transaction.clone())),
+                    .filter_map(|q| match q {
+                        InputObjectKind::MovePackage(_) => None,
+                        InputObjectKind::OwnedMoveObject(w) => Some(w.0),
+                        InputObjectKind::SharedMoveObject(w) => Some(*w),
+                    })
+                    .map(|e| (e, transaction.clone())),
             )
             .map_err(|e| e.into())
     }
@@ -453,12 +476,21 @@ impl ClientState {
         &self,
         transaction: &Transaction,
     ) -> Result<(), SuiError> {
+        // match self.lock.lock() {
+        //     Ok(_) => println!("Lock acquired for unlock"),
+        //     Err(err) => println!("Lock Error during unlock {}", err)
+        // };
         if !self.can_lock_or_unlock(transaction)? {
             return Err(SuiError::ConcurrentTransactionError);
         }
+        println!("unlock_pending_transaction_objects {:?}", transaction.digest());
         self.store
             .pending_transactions
-            .multi_remove(transaction.input_objects().iter().map(|e| e.object_id()))
+            .multi_remove(transaction.input_objects().iter().filter_map(|q| match q {
+                InputObjectKind::MovePackage(_) => None,
+                InputObjectKind::OwnedMoveObject(w) => Some(w.0),
+                InputObjectKind::SharedMoveObject(w) => Some(*w),
+            }))
             .map_err(|e| e.into())
     }
 }
@@ -483,11 +515,24 @@ where
         &mut self,
         transaction: &Transaction,
     ) -> Result<(CertifiedTransaction, TransactionEffects), anyhow::Error> {
-        let (new_certificate, effects) = self.authorities.execute_transaction(transaction).await?;
-
+        // println!("enter execute_transaction_inner");
+        let (new_certificate, effects) = match self.authorities.execute_transaction(transaction).await  {
+            Ok((new_certificate, effects)) => (new_certificate, effects),
+            Err(err) => {
+                // println!("authorities.execute_transaction {err}");
+                return Err(err);
+            }
+        };
+        // println!("after authorities.execute_transaction");
         // Update local data using new transaction response.
-        self.update_objects_from_transaction_info(new_certificate.clone(), effects.clone())
-            .await?;
+        match self.update_objects_from_transaction_info(new_certificate.clone(), effects.clone())
+            .await  {
+                Ok(_) => println!("update_objects_from_transaction_info was ok"),
+                Err(err) => {
+                    println!("update_objects_from_transaction_info {err}")
+                }
+            };
+        // println!("after update_objects_from_transaction_info");
 
         Ok((new_certificate, effects))
     }
@@ -501,6 +546,10 @@ where
         &mut self,
         transaction: Transaction,
     ) -> Result<(CertifiedTransaction, TransactionEffects), anyhow::Error> {
+        // match self.lock.lock() {
+        //     Ok(_) => println!("Lock acquired for execute"),
+        //     Err(err) => println!("Lock Error during execute {}", err)
+        // };
         let account = self.get_account(&transaction.sender_address())?;
         for object_kind in &transaction.input_objects() {
             let object_id = object_kind.object_id();
@@ -518,17 +567,28 @@ where
         }
         // Lock the objects in this transaction
         account.lock_pending_transaction_objects(&transaction)?;
+        // println!("before execute transaction");
 
         // We can escape this function without unlocking. This could be dangerous
-        let result = self.execute_transaction_inner(&transaction).await;
-
+        let result = match self.execute_transaction_inner(&transaction).await {
+            Ok(result) => {
+                // println!("transaction succeeded");
+                Ok(result)
+            },
+            Err(err) => {
+                println!("{err}");
+                Err(err)
+            }
+        };
+        // println!("after execute transaction");
         // How do we handle errors on authority which lock objects?
         // Currently VM crash can keep objects locked, but we would like to avoid this.
         // TODO: https://github.com/MystenLabs/fastnft/issues/349
         // https://github.com/MystenLabs/fastnft/issues/211
         // https://github.com/MystenLabs/fastnft/issues/346
-
+        // println!("before get account");
         let account = self.get_account(&transaction.sender_address())?;
+        // println!("after get account");
         account.unlock_pending_transaction_objects(&transaction)?;
         result
     }
@@ -569,9 +629,9 @@ where
 
         // TODO: decide what to do with failed object downloads
         // https://github.com/MystenLabs/fastnft/issues/331
-        let _failed = self
-            .download_objects_not_in_db(address, objs_to_download)
-            .await?;
+        // let _failed = self
+        //     .download_objects_not_in_db(address, objs_to_download)
+        //     .await?;
 
         for (object_id, seq, _) in &effects.deleted {
             let old_seq = account.highest_known_version(object_id).unwrap_or_default();

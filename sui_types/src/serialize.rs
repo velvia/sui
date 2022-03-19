@@ -169,8 +169,17 @@ pub fn deserialize_transaction_info(
     message: SerializedMessage,
 ) -> Result<TransactionInfoResponse, SuiError> {
     match message {
-        SerializedMessage::TransactionResp(resp) => Ok(*resp),
-        SerializedMessage::Error(error) => Err(*error),
-        _ => Err(SuiError::UnexpectedMessage),
+        SerializedMessage::TransactionResp(resp) => {
+            // println!("inside SerializedMessage::TransactionResp {:?}", resp);
+            Ok(*resp)
+        },
+        SerializedMessage::Error(error) => {
+            // println!("inside SerializedMessage::Error {error}");
+            Err(*error)
+        },
+        _ =>  {
+            // println!("inside Err(SuiError::UnexpectedMessage)");
+            Err(SuiError::UnexpectedMessage)
+        }
     }
 }

@@ -23,7 +23,7 @@ use tokio::time::timeout;
 
 // TODO: Make timeout duration configurable.
 const AUTHORITY_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-const OBJECT_DOWNLOAD_CHANNEL_BOUND: usize = 1024;
+const OBJECT_DOWNLOAD_CHANNEL_BOUND: usize = 1024000;
 pub const DEFAULT_RETRIES: usize = 4;
 
 #[cfg(test)]
@@ -866,14 +866,21 @@ where
             bad_stake: usize,
         }
 
+        
+        // println!("enter process_certificate");
+
         let state = ProcessCertificateState {
             effects_map: HashMap::new(),
             bad_stake: 0,
         };
 
         let cert_ref = &certificate;
+
+        // println!("before quorum_threshold");
         let threshold = self.committee.quorum_threshold();
+        // println!("before validity_threshold");
         let validity = self.committee.validity_threshold();
+        // println!("before quorum_map_then_reduce_with_timeout");
         let state = self
             .quorum_map_then_reduce_with_timeout(
                 state,
@@ -884,27 +891,31 @@ where
                         // - we try to update the authority with the cert, and on error return Err.
                         // - we try to re-process the certificate and return the result.
 
+                        //  println!("before handle_confirmation_transaction");
                         let res = client
                             .handle_confirmation_transaction(ConfirmationTransaction::new(
                                 cert_ref.clone(),
                             ))
                             .await;
-
+                        // println!("after handle_confirmation_transaction");
                         if res.is_ok() {
                             // We got an ok answer, so returning the result of processing
                             // the transaction.
-                            return res;
+                        //  println!("We got an ok answer, so returning the result of processing");
+                         return res;
                         }
 
                         // LockErrors indicate the authority may be out-of-date.
                         // We only attempt to update authority and retry if we are seeing LockErrors.
                         // For any other error, we stop here and return.
                         if !matches!(res, Err(SuiError::LockErrors { .. })) {
-                            return res;
+                        //  println!("LockErrors indicate the authority may be out-of-date.");
+                         return res;
                         }
 
                         // If we got LockErrors, we try to update the authority.
-                        let _result = self
+                        //  println!("before sync_certificate_to_authority_with_timeout.");
+                         let _result = self
                             .sync_certificate_to_authority_with_timeout(
                                 ConfirmationTransaction::new(cert_ref.clone()),
                                 _name,
@@ -914,7 +925,8 @@ where
                             .await?;
 
                         // Now try again
-                        client
+                        //  println!("before handle_confirmation_transaction.");
+                         client
                             .handle_confirmation_transaction(ConfirmationTransaction::new(
                                 cert_ref.clone(),
                             ))
@@ -925,13 +937,15 @@ where
                     Box::pin(async move {
                         // We aggregate the effects response, until we have more than 2f
                         // and return.
-                        if let Ok(TransactionInfoResponse {
+                        //  println!("We aggregate the effects response, until we have more than 2f");
+                         if let Ok(TransactionInfoResponse {
                             signed_effects: Some(inner_effects),
                             ..
                         }) = result
                         {
                             // Note: here we aggregate votes by the hash of the effects structure
-                            let entry = state
+                        //  println!("Note: here we aggregate votes by the hash of the effects structure");
+                         let entry = state
                                 .effects_map
                                 .entry(sha3_hash(&inner_effects.effects))
                                 .or_insert((0usize, inner_effects.effects));
@@ -939,7 +953,8 @@ where
 
                             if entry.0 >= threshold {
                                 // It will set the timeout quite high.
-                                return Ok(ReduceOutput::ContinueWithTimeout(
+                        //  println!("// It will set the timeout quite high.");
+                         return Ok(ReduceOutput::ContinueWithTimeout(
                                     state,
                                     timeout_after_quorum,
                                 ));
@@ -949,7 +964,8 @@ where
                         // If instead we have more than f bad responses, then we fail.
                         state.bad_stake += weight;
                         if state.bad_stake > validity {
-                            return Err(SuiError::ErrorWhileRequestingCertificate);
+                        //  println!("If instead we have more than f bad responses, then we fail.");
+                         return Err(SuiError::ErrorWhileRequestingCertificate);
                         }
 
                         Ok(ReduceOutput::Continue(state))
@@ -962,12 +978,14 @@ where
 
         // Check that one effects structure has more than 2f votes,
         // and return it.
+        // println!("Check that one effects structure has more than 2f votes,");
         for (stake, effects) in state.effects_map.into_values() {
             if stake >= threshold {
                 return Ok(effects);
             }
         }
 
+        // println!("If none has, fail.");
         // If none has, fail.
         Err(SuiError::ErrorWhileRequestingCertificate)
     }
@@ -1019,13 +1037,15 @@ where
         &self,
         transaction: &Transaction,
     ) -> Result<(CertifiedTransaction, TransactionEffects), anyhow::Error> {
+        // println!("enter execute transaction");
         let new_certificate = self
             .process_transaction(transaction.clone(), Duration::from_secs(60))
             .await?;
+        // println!("after process_transactionn");
         let response = self
             .process_certificate(new_certificate.clone(), Duration::from_secs(60))
             .await?;
-
+        // println!("after process_certificate");
         Ok((new_certificate, response))
     }
 
@@ -1159,9 +1179,12 @@ where
                 _ => (),
             }
         }
-        sender
+        match sender
             .send(ret_val)
-            .await
-            .expect("Cannot send object on channel after object fetch attempt");
+            .await {
+                Ok(_) => println!("sender channel ok"),
+                Err(err) => println!("sender channel error - {}", err)
+            };
+            // .expect("Cannot send object on channel after object fetch attempt");
     }
 }
