@@ -741,6 +741,14 @@ impl<const ALL_OBJ_VER: bool> SuiDataStore<ALL_OBJ_VER> {
                 return_seq = Some(next_seq);
             }
 
+            debug!(
+                "Writing objects: {:?}",
+                written
+                    .iter()
+                    .map(|(_, (oref, _))| (oref.0, oref.1))
+                    .collect::<Vec<_>>()
+            );
+
             // Atomic write of all locks & other data
             write_batch.write()?;
 
