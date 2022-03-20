@@ -44,7 +44,6 @@ pub struct TypeCheckSuccess {
 /// otherwise involve repeated deserialization.
 #[derive(Debug, Clone, Default)]
 pub struct PackageCache {
-    pub module_id_cache: Arc<parking_lot::RwLock<HashMap<Identifier, ModuleId>>>,
     pub function_signature_cache:
         Arc<parking_lot::RwLock<HashMap<(Identifier, Identifier), Function>>>,
 }
@@ -91,24 +90,7 @@ impl MovePackage {
     }
 
     pub fn module_id(&self, module: &Identifier) -> Result<ModuleId, SuiError> {
-        if let Some(id) = self.cache.module_id_cache.read().get(module) {
-            return Ok(id.clone());
-        }
-
-        let ser = self
-            .serialized_module_map()
-            .get(module.as_str())
-            .ok_or_else(|| SuiError::ModuleNotFound {
-                module_name: module.to_string(),
-            })?;
-
-        let id = CompiledModule::deserialize(ser)?.self_id();
-        self.cache
-            .module_id_cache
-            .write()
-            .insert(module.clone(), id.clone());
-
-        Ok(id)
+        Ok(ModuleId::new(*self.id, module.clone()))
     }
 
     /// Get the function signature for the specified function

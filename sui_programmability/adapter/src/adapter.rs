@@ -49,7 +49,7 @@ macro_rules! exec_failure {
 mod adapter_tests;
 
 // This structure holds a VM and a cache of packages that contain
-// in turn caches of their module IDs and Function entry points,
+// in turn caches of their Function entry points,
 // that involve re-computation / deserialization to otherwise get.
 pub struct SuiMoveVM {
     movevm: MoveVM,
