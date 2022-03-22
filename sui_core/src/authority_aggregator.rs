@@ -1165,6 +1165,7 @@ where
                         return Ok(ObjectRead::Exists(obj_ref, obj, layout_option));
                     }
                     None => {
+                        // TODO: Figure out how to find out object being wrapped instead of deleted.
                         return Ok(ObjectRead::Deleted(obj_ref));
                     }
                 };

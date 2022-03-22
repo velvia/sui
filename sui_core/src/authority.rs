@@ -6,6 +6,7 @@ use crate::{
     authority_batch::{BroadcastReceiver, BroadcastSender},
     execution_engine, transaction_input_checker,
 };
+use itertools::Either;
 use move_binary_format::CompiledModule;
 use move_bytecode_utils::module_cache::ModuleCache;
 use move_core_types::{
@@ -50,7 +51,7 @@ mod temporary_store;
 pub use temporary_store::AuthorityTemporaryStore;
 
 mod authority_store;
-pub use authority_store::AuthorityStore;
+pub use authority_store::{AuthorityStore, GatewayStore};
 
 pub mod authority_notifier;
 
@@ -253,6 +254,16 @@ impl AuthorityState {
         Ok(())
     }
 
+    fn sign_effects(&self, effects: TransactionEffects) -> SignedTransactionEffects {
+        let signature = AuthoritySignature::new(&effects, &*self.secret);
+
+        SignedTransactionEffects {
+            effects,
+            authority: self.name,
+            signature,
+        }
+    }
+
     async fn process_certificate(
         &self,
         confirmation_transaction: ConfirmationTransaction,
@@ -275,43 +286,19 @@ impl AuthorityState {
             "Read inputs for transaction from DB"
         );
 
-        let mut transaction_dependencies: BTreeSet<_> = objects_by_kind
-            .iter()
-            .map(|(_, object)| object.previous_transaction)
-            .collect();
-
-        // Insert into the certificates map
-        let mut tx_ctx = TxContext::new(&transaction.sender_address(), &transaction_digest);
-
-        let gas_object_id = transaction.gas_payment_object_ref().0;
         let mut temporary_store =
-            AuthorityTemporaryStore::new(self._database.clone(), &objects_by_kind, tx_ctx.digest());
-        let status = execution_engine::execute_transaction(
+            AuthorityTemporaryStore::new(self._database.clone(), &objects_by_kind, transaction_digest);
+        let effects = execution_engine::execute_transaction_to_effects(
             &mut temporary_store,
             transaction.clone(),
+            transaction_digest,
             objects_by_kind,
-            &mut tx_ctx,
             &self.move_vm,
             self._native_functions.clone(),
         )?;
-        debug!(
-            gas_used = status.gas_used(),
-            "Finished execution of transaction with status {:?}", status
-        );
+        let signed_effects = self.sign_effects(effects);
 
-        // Remove from dependencies the generic hash
-        transaction_dependencies.remove(&TransactionDigest::genesis());
-
-        let signed_effects = temporary_store.to_signed_effects(
-            &self.name,
-            &*self.secret,
-            &transaction_digest,
-            transaction_dependencies.into_iter().collect(),
-            status,
-            &gas_object_id,
-        );
         // Update the database in an atomic manner
-
         self.update_state(temporary_store, certificate, signed_effects)
             .instrument(tracing::debug_span!("db_update_state"))
             .await // Returns the OrderInfoResponse

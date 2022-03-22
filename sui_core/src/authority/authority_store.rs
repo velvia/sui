@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
+use itertools::Either;
 use rocksdb::{ColumnFamilyDescriptor, Options};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -21,6 +22,7 @@ use typed_store::{reopen, traits::Map};
 pub type AuthorityStore = SuiDataStore<true>;
 #[allow(dead_code)]
 pub type ReplicaStore = SuiDataStore<false>;
+pub type GatewayStore = SuiDataStore<false>;
 
 const NUM_SHARDS: usize = 4096;
 
@@ -62,6 +64,10 @@ pub struct SuiDataStore<const AUTHORITY: bool> {
     /// This is not needed by an authority, but is needed by a replica.
     #[allow(dead_code)]
     all_object_versions: DBMap<(ObjectID, SequenceNumber), Object>,
+
+    /// This maps between the transaction digest to the raw transactions,
+    /// It's not needed by authorities, but is needed by the Gateway.
+    transactions: DBMap<TransactionDigest, Transaction>,
 
     /// This is a map between object references of currently active objects that can be mutated,
     /// and the transaction that they are lock on for use by this specific authority. Where an object
@@ -195,6 +201,7 @@ impl<const AUTHORITY: bool> SuiDataStore<AUTHORITY> {
             &[
                 ("objects", &point_lookup),
                 ("all_object_versions", &options),
+                ("transactions", &point_lookup),
                 ("owner_index", &options),
                 ("transaction_lock", &point_lookup),
                 ("transactions", &point_lookup),
@@ -228,6 +235,7 @@ impl<const AUTHORITY: bool> SuiDataStore<AUTHORITY> {
         let (
             objects,
             all_object_versions,
+            transactions,
             owner_index,
             transaction_lock,
             transactions,
@@ -242,6 +250,7 @@ impl<const AUTHORITY: bool> SuiDataStore<AUTHORITY> {
             &db,
             "objects";<ObjectID, Object>,
             "all_object_versions";<(ObjectID, SequenceNumber), Object>,
+            "transactions";<TransactionDigest, Transaction>,
             "owner_index";<(SuiAddress, ObjectID), ObjectRef>,
             "transaction_lock";<ObjectRef, Option<TransactionDigest>>,
             "transactions";<TransactionDigest, RawOrSignedData<Transaction, AUTHORITY>>,
@@ -256,6 +265,7 @@ impl<const AUTHORITY: bool> SuiDataStore<AUTHORITY> {
         Self {
             objects,
             all_object_versions,
+            transactions,
             owner_index,
             transaction_lock,
             transactions,
@@ -455,7 +465,10 @@ impl<const AUTHORITY: bool> SuiDataStore<AUTHORITY> {
     pub fn insert_object(&self, object: Object) -> Result<(), SuiError> {
         // We only side load objects with a genesis parent transaction.
         debug_assert!(object.previous_transaction == TransactionDigest::genesis());
+        self.insert_object_unsafe(object)
+    }
 
+    pub fn insert_object_unsafe(&self, object: Object) -> Result<(), SuiError> {
         // Insert object
         let object_ref = object.compute_object_reference();
         self.objects.insert(&object_ref.0, &object)?;
@@ -470,9 +483,6 @@ impl<const AUTHORITY: bool> SuiDataStore<AUTHORITY> {
         // Update the parent
         self.parent_sync
             .insert(&object_ref, &object.previous_transaction)?;
-
-        // We only side load objects with a genesis parent transaction.
-        debug_assert!(object.previous_transaction == TransactionDigest::genesis());
 
         Ok(())
     }
@@ -511,6 +521,15 @@ impl<const AUTHORITY: bool> SuiDataStore<AUTHORITY> {
             )?
             .write()?;
 
+        Ok(())
+    }
+
+    pub fn insert_cert(
+        &self,
+        tx_digest: &TransactionDigest,
+        cert: &CertifiedTransaction,
+    ) -> SuiResult {
+        self.certificates.insert(tx_digest, cert)?;
         Ok(())
     }
 
@@ -774,6 +793,35 @@ impl<const AUTHORITY: bool> SuiDataStore<AUTHORITY> {
                     &self.executed_sequence,
                     std::iter::once((next_seq, transaction_digest)),
                 )?;
+            }
+
+            // Atomic write of all locks & other data
+            write_batch.write()?;
+
+            // implicit: drop(_mutexes);
+        } // End of critical region
+
+        Ok(())
+    }
+
+    /// This function only removes the transaction locks set on the input objects.
+    /// It's used by the Gateway.
+    pub fn remove_transaction_lock_only(&self, active_inputs: &[ObjectRef]) -> SuiResult {
+        let mut write_batch = self.transaction_lock.batch();
+        // Archive the old lock.
+        write_batch = write_batch.delete_batch(&self.transaction_lock, active_inputs.iter())?;
+
+        // This is the critical region: testing the locks and writing the
+        // new locks must be atomic, and no writes should happen in between.
+        {
+            // Acquire the lock to ensure no one else writes when we are in here.
+            let _mutexes = self.acquire_locks(&active_inputs[..]);
+
+            // Check the locks are still active
+            // TODO: maybe we could just check if the certificate is there instead?
+            let locks = self.transaction_lock.multi_get(&active_inputs[..])?;
+            for object_lock in locks {
+                object_lock.ok_or(SuiError::TransactionLockDoesNotExist)?;
             }
 
             // Atomic write of all locks & other data
