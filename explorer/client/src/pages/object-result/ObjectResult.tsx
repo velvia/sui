@@ -471,7 +471,7 @@ const ObjectResult = (): JSX.Element => {
                                                     {checkSingleID(value) && (
                                                         <Longtext
                                                             text={value.bytes}
-                                                            category="objectId"
+                                                            category="objects"
                                                         />
                                                     )}
                                                     {checkVecIDs(value) && (
@@ -487,7 +487,7 @@ const ObjectResult = (): JSX.Element => {
                                                                         text={
                                                                             value2.bytes
                                                                         }
-                                                                        category="objectId"
+                                                                        category="objects"
                                                                         key={`ConnectedEntity-${index1}-${index2}`}
                                                                     />
                                                                 )
