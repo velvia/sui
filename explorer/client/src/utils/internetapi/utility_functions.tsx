@@ -1,4 +1,3 @@
-import mockTransactionData from './mock_data.json';
 import { DefaultRpcClient as rpc } from './rpc';
 
 const navigateWithUnknown = async (input: string, navigate: Function) => {
@@ -39,11 +38,6 @@ const navigateWithUnknown = async (input: string, navigate: Function) => {
         });
 };
 
-const findDataFromID = (targetID: string | undefined, state: any) =>
-    state?.category !== undefined
-        ? state
-        : mockTransactionData.data.find(({ id }) => id === targetID);
-
 export function asciiFromNumberBytes(bytes: number[]) {
     return bytes.map((n) => String.fromCharCode(n)).join('');
 }
@@ -63,4 +57,4 @@ const stdLibPrefix = /^0x2::/;
 export const trimStdLibPrefix = (str: string): string =>
     str.replace(stdLibPrefix, '');
 
-export { findDataFromID, navigateWithUnknown };
+export { navigateWithUnknown };

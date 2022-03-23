@@ -10,11 +10,11 @@ import {
     type AddressOwner,
     SuiRpcClient,
     DefaultRpcClient,
-} from '../../utils/rpc';
+} from '../../utils/internetapi/rpc';
 import {
     asciiFromNumberBytes,
     trimStdLibPrefix,
-} from '../../utils/utility_functions';
+} from '../../utils/internetapi/utility_functions';
 
 import styles from './ObjectResult.module.css';
 
