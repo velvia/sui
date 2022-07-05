@@ -25,6 +25,10 @@ use sui_benchmark::benchmark::{
 use tracing::subscriber::set_global_default;
 use tracing_subscriber::EnvFilter;
 
+/// Enable the dhat-heap feature for DHAT memory analysis
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
 // For memory profiling info see https://github.com/jemalloc/jemalloc/wiki/Use-Case%3A-Heap-Profiling
 // Example: set JE_MALLOC_CONF or _RJEM_MALLOC_CONF to:
 //   prof:true,lg_prof_interval:24,lg_prof_sample:19
@@ -32,19 +36,20 @@ use tracing_subscriber::EnvFilter;
 //   and dump out profile every 2^24 or 16MB of memory allocated.
 //
 // See [doc/src/contribute/observability.md] for more info.
-#[cfg(not(target_env = "msvc"))]
-use jemalloc_ctl::{epoch, stats};
-#[cfg(not(target_env = "msvc"))]
-use jemallocator::Jemalloc;
-
-#[cfg(not(target_env = "msvc"))]
+#[cfg(all(not(target_env = "msvc"), not(feature = "dhat-heap")))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: Jemalloc = jemallocator::Jemalloc;
 
 fn main() {
-    use jemalloc_ctl::config;
-    let malloc_conf = config::malloc_conf::mib().unwrap();
-    println!("Default Jemalloc conf: {}", malloc_conf.read().unwrap());
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
+    #[cfg(all(not(target_env = "msvc"), not(feature = "dhat-heap")))]
+    {
+        use jemalloc_ctl::config;
+        let malloc_conf = config::malloc_conf::mib().unwrap();
+        println!("Default Jemalloc conf: {}", malloc_conf.read().unwrap());
+    }
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let subscriber_builder =
@@ -54,8 +59,9 @@ fn main() {
     let benchmark = bench_types::Benchmark::parse();
     running_mode_pre_check(&benchmark);
 
-    #[cfg(not(target_env = "msvc"))]
+    #[cfg(all(not(target_env = "msvc"), not(feature = "dhat-heap")))]
     std::thread::spawn(|| {
+        use jemalloc_ctl::{epoch, stats};
         loop {
             // many statistics are cached and only updated when the epoch is advanced.
             epoch::advance().unwrap();

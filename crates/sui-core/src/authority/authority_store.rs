@@ -6,7 +6,7 @@ use crate::epoch::EpochInfoLocals;
 use crate::gateway_state::GatewayTxSeqNumber;
 use crate::transaction_input_checker::InputObjects;
 use narwhal_executor::ExecutionIndices;
-use rocksdb::Options;
+use rocksdb::{Options, DBWithThreadMode, MultiThreaded};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::path::Path;
@@ -128,6 +128,9 @@ pub struct SuiDataStore<S> {
 
     /// Map from each epoch ID to the epoch information.
     epochs: DBMap<EpochId, EpochInfoLocals>,
+
+    /// Store the DB to get memory stats
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
 }
 
 impl<S: Eq + Serialize + for<'de> Deserialize<'de>> SuiDataStore<S> {
@@ -226,7 +229,14 @@ impl<S: Eq + Serialize + for<'de> Deserialize<'de>> SuiDataStore<S> {
             batches,
             last_consensus_index,
             epochs,
+            db
         }
+    }
+
+    /// Get total memory used for RocksDB mem tables, plus cache usage
+    pub fn get_memory_stats(&self) -> Result<(u64, u64), SuiError> {
+        let stats = rocksdb::perf::get_memory_usage_stats(Some(&[self.db]), None)?;
+        Ok((stats.mem_table_total, stats.cache_total))
     }
 
     // TODO: Async retry method, using tokio-retry crate.
