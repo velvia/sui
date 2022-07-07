@@ -6,7 +6,7 @@ use crate::epoch::EpochInfoLocals;
 use crate::gateway_state::GatewayTxSeqNumber;
 use crate::transaction_input_checker::InputObjects;
 use narwhal_executor::ExecutionIndices;
-use rocksdb::{Options, DBWithThreadMode, MultiThreaded};
+use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::path::Path;
@@ -229,13 +229,14 @@ impl<S: Eq + Serialize + for<'de> Deserialize<'de>> SuiDataStore<S> {
             batches,
             last_consensus_index,
             epochs,
-            db
+            db,
         }
     }
 
     /// Get total memory used for RocksDB mem tables, plus cache usage
     pub fn get_memory_stats(&self) -> Result<(u64, u64), SuiError> {
-        let stats = rocksdb::perf::get_memory_usage_stats(Some(&[self.db]), None)?;
+        let stats = rocksdb::perf::get_memory_usage_stats(Some(&[&*self.db]), None)
+            .map_err(|e| typed_store::StoreError::RocksDBError(e.to_string()))?;
         Ok((stats.mem_table_total, stats.cache_total))
     }
 

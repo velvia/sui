@@ -18,6 +18,7 @@
 // ./bench microbench local-single-validator-thread latency
 
 use clap::*;
+#[cfg(all(not(target_env = "msvc"), not(feature = "dhat-heap")))]
 use std::time::Duration;
 use sui_benchmark::benchmark::{
     bench_types, run_benchmark, validator_preparer::VALIDATOR_BINARY_NAME,
@@ -38,7 +39,7 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 // See [doc/src/contribute/observability.md] for more info.
 #[cfg(all(not(target_env = "msvc"), not(feature = "dhat-heap")))]
 #[global_allocator]
-static GLOBAL: Jemalloc = jemallocator::Jemalloc;
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 fn main() {
     #[cfg(feature = "dhat-heap")]
@@ -78,7 +79,6 @@ fn main() {
 
     let r = run_benchmark(benchmark);
     println!("{}", r);
-
 }
 
 fn running_mode_pre_check(benchmark: &bench_types::Benchmark) {
