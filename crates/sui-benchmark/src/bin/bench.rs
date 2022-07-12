@@ -38,7 +38,7 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 // See [doc/src/contribute/observability.md] for more info.
 #[cfg(all(not(target_env = "msvc"), not(feature = "dhat-heap")))]
 #[global_allocator]
-static GLOBAL: Jemalloc = jemallocator::Jemalloc;
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 fn main() {
     #[cfg(feature = "dhat-heap")]
@@ -48,7 +48,7 @@ fn main() {
     {
         use jemalloc_ctl::config;
         let malloc_conf = config::malloc_conf::mib().unwrap();
-        println!("Default Jemalloc conf: {}", malloc_conf.read().unwrap());
+        println!("Compiled Jemalloc conf: {}", malloc_conf.read().unwrap());
     }
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
