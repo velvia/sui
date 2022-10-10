@@ -31,7 +31,7 @@ jobs:
     name: Run test on the beta channel
     runs-on: [self-hosted, ubuntu]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v3.1.0
       - name: Install beta toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -51,7 +51,7 @@ jobs:
     name: build release binaries
     runs-on: [self-hosted, ubuntu]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v3.1.0
       - uses: actions-rs/toolchain@v1
       - name: cargo build
         uses: actions-rs/cargo@v1
